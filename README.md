@@ -31,7 +31,9 @@ Android 的 F-Droid 版 KOReader 不执行用户补丁，不能通过安装本 L
 
 ## 下载
 
-完整安装包请在 [Releases](https://github.com/zacharykim88/Inkfolio/releases) 下载；也可下载仓库源码，按下述步骤安装。
+[下载 v1.0.0 完整安装包](https://github.com/zacharykim88/Inkfolio/raw/refs/heads/main/dist/Inkfolio-v1.0.0.zip)（含补丁、两款字体与授权文件）。
+
+版本发布页：[Releases](https://github.com/zacharykim88/Inkfolio/releases)。安装请使用上方完整包；仓库中香萃字体保存在完整包内，直接下载源码时请另行取得完整包中的字体。
 
 ## 安装与升级
 
