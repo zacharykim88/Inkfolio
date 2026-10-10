@@ -21,7 +21,7 @@ jobs:
         run: |
           set -euo pipefail
           package="$RUNNER_TEMP/Inkfolio-v1.0.0.zip"
-          gh api "repos/$GITHUB_REPOSITORY/contents/dist/Inkfolio-v1.0.0.zip?ref=$GITHUB_SHA" -H 'Accept: application/vnd.github.raw+json' > "$package"
+          curl --fail --location --silent --show-error "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/dist/Inkfolio-v1.0.0.zip" --output "$package"
           printf '%s  %s\n' 'f6e63c5d4321bad030fe4cc6ce249e73c5063474ba6104a09fb6286d3500f390' "$package" | sha256sum --check
           unzip -t "$package"
           notes="$RUNNER_TEMP/release-notes.md"
