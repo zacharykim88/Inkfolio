@@ -1,0 +1,41 @@
+name: Publish Inkfolio v1.1.0
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/publish-v1.1.0.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: publish-inkfolio-v1.1.0
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify accepted package and publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          base="https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA"
+          curl --fail --location --silent --show-error "$base/dist/Inkfolio-v1.1.0.zip" --output Inkfolio-v1.1.0.zip
+          printf '%s  %s\n' '8fd33ac381dbb789b5043a65a637286206386fdfb455da2191d619fd64c436b8' 'Inkfolio-v1.1.0.zip' | sha256sum --check
+          unzip -t Inkfolio-v1.1.0.zip
+          mkdir screenshots
+          for name in 01-receipt.png 02-appearance.png 03-reading-summary.png 04-settings.png 05-information-status.png 06-about.png 07-changelog.png README.md; do
+            curl --fail --location --silent --show-error "$base/docs/screenshots/v1.1.0/$name" --output "screenshots/$name"
+          done
+          zip -r Inkfolio-v1.1.0-screenshots.zip screenshots
+          curl --fail --location --silent --show-error "$base/CHANGELOG.md" --output changelog.md
+          python3 - <<'PY'
+          from pathlib import Path
+          text=Path('changelog.md').read_text().split('\n---\n',1)[0].strip()
+          text+='\n\n实机截图与展示说明：https://github.com/zacharykim88/Inkfolio/tree/v1.1.0/docs/screenshots/v1.1.0\n\n安装请下载 Inkfolio-v1.1.0.zip，含补丁、字体和授权文件。screenshots 为展示图片包，无需安装。Kobo Sage 完整包实机验收正常，其他设备尚未实机验证。\n'
+          Path('release-notes.md').write_text(text)
+          PY
+          sha256sum Inkfolio-v1.1.0.zip Inkfolio-v1.1.0-screenshots.zip > SHA256SUMS.txt
+          gh release create v1.1.0 Inkfolio-v1.1.0.zip Inkfolio-v1.1.0-screenshots.zip SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title '墨笺 · Inkfolio v1.1.0' --notes-file release-notes.md --latest
