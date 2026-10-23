@@ -1,0 +1,26 @@
+InkFolio
+v1.2.0｜2026-10-23
+
+为 KOReader 提供阅读信息卡，支持休眠显示与截图。
+
+• 图书信息：联网获取豆瓣评分，支持匹配确认、重新检索；展示豆瓣月榜，支持分类与离线轮换。
+• 阅读统计：展示阅读进度、时长、页数与字数，支持数据自定义组合及周／月趋势图。
+• 阅读目标：按日、周、月设置阅读时长或字数目标，查看完成进度。
+• UI皮肤：提供小票、像素、现代三种风格，支持实时预览，可调整宽度、字号、比例和背景。
+
+兼容性
+• Kobo Sage：已通过实机验证。
+• Kindle、PocketBook：需先安装并正常运行 KOReader；尚未经实机验证，休眠显示取决于设备支持。
+• Android 手机及安卓电纸书：使用 KOReader 官方 GitHub 安装包，可尝试信息卡预览与截图；不能替换系统锁屏，尚未经实机验证。
+• F-Droid 版 KOReader：不支持本项目所需的用户补丁，无法使用。
+
+开发与设计：zacharykim88
+开发辅助：OpenAI Codex
+推荐项目：墨享 · InkShare——分享 KOReader 截图。
+
+上游致谢
+Estela-Zelin84/KOReader_Book-Receipt
+u/hundredpercentcocoa
+omer-faruq/koreader-user-patches
+
+代码：GPL-3.0｜字体许可见随包说明

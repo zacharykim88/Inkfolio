@@ -1,0 +1,2 @@
+4d24b17d8f07ce1a6beb33add0b623d7e7614acbb7da3d7fe007af3e95d33e23  dist/InkFolio-v1.2.0.zip
+b985ebfe404dadbd4ca9d42f8da11c9703a998ad8312a663c0c26ebedc014673  2-inkfolio.lua
