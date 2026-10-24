@@ -83,7 +83,7 @@ ui.bookinfo={getCoverImage=function()
  label('安迪·威尔',22,785,55);label('示意封面 · 非原版设计',12,860,30)
  return bb
 end}
-local options={width=.78,font=1,scale=.78,background='white',card_width=.60,card_font=1,cover_background='white'}
+local options={width=.78,font=1,scale=.78,background='white',card_font=1,cover_background='white'}
 local scene,valid=api.build(ui,ui.view.state,options);assert(valid,'preview does not fit')
 local bb=BB.new(Screen:getWidth(),Screen:getHeight(),BB.TYPE_BB8);bb:fill(BB.COLOR_WHITE);scene:paintTo(bb,0,0)
 bb:writePNG(assert(os.getenv('PREVIEW_OUT')));bb:free();scene:free()

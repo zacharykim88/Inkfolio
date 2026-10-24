@@ -44,7 +44,7 @@ local Screen = Device.screen
 local Inkfolio = {}
 local VERSION = '1.2.0'
 local RELEASE_DATE = '2026-10-23'
-local BUILD_ID='cover-network-20261024-dev13'
+local BUILD_ID='cover-network-20261024-dev13-width50'
 
 -- Four skins share data, content choices and the common preview/export/suspend entry.
 Inkfolio.UI_STYLES={{id='classic',label='小票'},{id='pixel',label='像素'},{id='swiss',label='现代'},{id='cover',label='封面'}}
@@ -4045,7 +4045,7 @@ function Inkfolio.renderCover(ui,state,appearance)
     appearance=appearance or {}
     local theme=Inkfolio.uiStyle({ui_style='cover'})
     local sw,sh=Screen:getWidth(),Screen:getHeight()
-    local fraction=appearance.card_width or G_reader_settings:readSetting(S.card_width) or .60
+    local fraction=appearance.card_width or G_reader_settings:readSetting(S.card_width) or .50
     local font_scale=appearance.card_font or G_reader_settings:readSetting(S.card_font) or 1
     assert(type(fraction)=='number' and fraction>=.4 and fraction<=.85,'InkFolio: 卡片宽度无效')
     assert(type(font_scale)=='number' and font_scale>=.8 and font_scale<=1.2,'InkFolio: 卡片字号无效')
@@ -4850,7 +4850,7 @@ function AppearanceEditor:init()
         font=G_reader_settings:readSetting(S.font) or 1,
         scale=G_reader_settings:readSetting(S.scale) or 1,
         background=G_reader_settings:readSetting(S.background) or 'white',ui_style=Inkfolio.uiStyle().id,
-        card_width=G_reader_settings:readSetting(S.card_width)or .60,card_font=G_reader_settings:readSetting(S.card_font)or 1,
+        card_width=G_reader_settings:readSetting(S.card_width)or .50,card_font=G_reader_settings:readSetting(S.card_font)or 1,
         cover_background=G_reader_settings:readSetting(S.cover_background)or 'white'}
     self.backdrop=Screen.bb:copy()
     -- Repaint the reading view without the settings menu for transparent previews.
@@ -5366,7 +5366,7 @@ local function openProjectLink(url)
 end
 function Inkfolio.showChangelog()
     UIManager:show(require('ui/widget/textviewer'):new{
-        title='更新日志',text="尚未发布｜2026-10-24\n• 新增封面皮肤：完整封面与中央阅读卡片，默认卡片宽度为屏幕60%，支持黑白底色。\n• 按任务到期更新联网内容：天气6小时，图书失败间隔30分钟、每本每天最多3次；取消只暂停当前模块。\n• 取消固定45秒巡检与周期书库扫描，开书只检查本书，书库进入或刷新时扫描。\n• 统一信息层级与间距，现代皮肤书名字号提高到55，缩小顶栏天气与日期，简化图表分隔与辅助数字强调。\n• 统一外观选中标记，明确预览、保存及即时设置的生效方式。\n• 恢复城市天气，今日、明日天气与日期可分别勾选显示。\n• 单选天气沿用单行顶栏；同时选择两日天气时，第二排城市左对齐、今日居中、明日右对齐。\n\nv1.2.0｜2026-10-23\n\n新增\n• 阅读字数按日汇总，新增周／月字数柱状图，更直观地查看阅读量。\n• 日／周／月阅读目标，支持时长或字数，展示完成比例。\n• 小票、像素、现代三种风格，可切换并实时预览。\n• 豆瓣月榜，支持分类选择与离线轮换。\n\n调整\n• 阅读摘要扩展本周、本月统计，趋势图最多同时显示两项。\n• 优化排版、字体层级与设置操作，精简干扰视觉呈现的冗余功能。\n\n升级注意\n已安装用户请覆盖补丁并合并随包字体，保留原设置和阅读数据。\n仅 v1.0.0 用户需先删除旧补丁 2-book-receipt-shortcut-and-lockscreen.lua。\n\n---\n\nv1.1.0｜2026-10-13\n\n新增\n• InkFolio 截图及设置、截图手势入口。\n• 周／月阅读时长柱状图及已读字数统计。\n• 图书匹配确认、重新检索、来源查询、复现记录及脱敏诊断导出。\n\n调整\n• 完善豆瓣匹配、评分均分及获取规则，减少重复联网。\n• 整理设置层级与界面，修复菜单图标、返回、取消和缓存保留问题。\n• 新用户默认黑色背景、关闭进度弹窗，首次显示时自动适配比例；旧用户设置保留。\n\n升级注意\n已安装 v1.0.0 的用户：本次补丁文件更名为 2-inkfolio.lua。升级前请删除旧文件 2-book-receipt-shortcut-and-lockscreen.lua，再安装新补丁。已有设置和字体可继续使用。",
+        title='更新日志',text="尚未发布｜2026-10-24\n• 新增封面皮肤：完整封面与中央阅读卡片，默认卡片宽度为屏幕50%，支持黑白底色。\n• 按任务到期更新联网内容：天气6小时，图书失败间隔30分钟、每本每天最多3次；取消只暂停当前模块。\n• 取消固定45秒巡检与周期书库扫描，开书只检查本书，书库进入或刷新时扫描。\n• 统一信息层级与间距，现代皮肤书名字号提高到55，缩小顶栏天气与日期，简化图表分隔与辅助数字强调。\n• 统一外观选中标记，明确预览、保存及即时设置的生效方式。\n• 恢复城市天气，今日、明日天气与日期可分别勾选显示。\n• 单选天气沿用单行顶栏；同时选择两日天气时，第二排城市左对齐、今日居中、明日右对齐。\n\nv1.2.0｜2026-10-23\n\n新增\n• 阅读字数按日汇总，新增周／月字数柱状图，更直观地查看阅读量。\n• 日／周／月阅读目标，支持时长或字数，展示完成比例。\n• 小票、像素、现代三种风格，可切换并实时预览。\n• 豆瓣月榜，支持分类选择与离线轮换。\n\n调整\n• 阅读摘要扩展本周、本月统计，趋势图最多同时显示两项。\n• 优化排版、字体层级与设置操作，精简干扰视觉呈现的冗余功能。\n\n升级注意\n已安装用户请覆盖补丁并合并随包字体，保留原设置和阅读数据。\n仅 v1.0.0 用户需先删除旧补丁 2-book-receipt-shortcut-and-lockscreen.lua。\n\n---\n\nv1.1.0｜2026-10-13\n\n新增\n• InkFolio 截图及设置、截图手势入口。\n• 周／月阅读时长柱状图及已读字数统计。\n• 图书匹配确认、重新检索、来源查询、复现记录及脱敏诊断导出。\n\n调整\n• 完善豆瓣匹配、评分均分及获取规则，减少重复联网。\n• 整理设置层级与界面，修复菜单图标、返回、取消和缓存保留问题。\n• 新用户默认黑色背景、关闭进度弹窗，首次显示时自动适配比例；旧用户设置保留。\n\n升级注意\n已安装 v1.0.0 的用户：本次补丁文件更名为 2-inkfolio.lua。升级前请删除旧文件 2-book-receipt-shortcut-and-lockscreen.lua，再安装新补丁。已有设置和字体可继续使用。",
         justified=false,show_menu=false,add_default_buttons=true,
     })
 end
