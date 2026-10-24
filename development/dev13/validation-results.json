@@ -1,0 +1,495 @@
+{
+  "source_sha256": "9734e9cf730c96569b45746701e9f2159e74a14cbd1d6554971f630d58691634",
+  "passed": 7671,
+  "failed": 0,
+  "results": [
+    {
+      "suite": "weather",
+      "style": "all",
+      "resolution": "600x800",
+      "passed": 901,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "themes",
+      "style": "all",
+      "resolution": "600x800",
+      "passed": 152,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "cover",
+      "style": "all",
+      "resolution": "600x800",
+      "passed": 110,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "layout",
+      "style": "classic",
+      "resolution": "600x800",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "layout",
+      "style": "pixel",
+      "resolution": "600x800",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "layout",
+      "style": "swiss",
+      "resolution": "600x800",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "statistics",
+      "style": "classic",
+      "resolution": "600x800",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "statistics",
+      "style": "pixel",
+      "resolution": "600x800",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "statistics",
+      "style": "swiss",
+      "resolution": "600x800",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "migration",
+      "style": "classic",
+      "resolution": "600x800",
+      "passed": 8,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "migration",
+      "style": "pixel",
+      "resolution": "600x800",
+      "passed": 8,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "migration",
+      "style": "swiss",
+      "resolution": "600x800",
+      "passed": 8,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "weather",
+      "style": "all",
+      "resolution": "758x1024",
+      "passed": 901,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "themes",
+      "style": "all",
+      "resolution": "758x1024",
+      "passed": 152,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "cover",
+      "style": "all",
+      "resolution": "758x1024",
+      "passed": 110,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "layout",
+      "style": "classic",
+      "resolution": "758x1024",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "layout",
+      "style": "pixel",
+      "resolution": "758x1024",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "layout",
+      "style": "swiss",
+      "resolution": "758x1024",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "statistics",
+      "style": "classic",
+      "resolution": "758x1024",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "statistics",
+      "style": "pixel",
+      "resolution": "758x1024",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "statistics",
+      "style": "swiss",
+      "resolution": "758x1024",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "migration",
+      "style": "classic",
+      "resolution": "758x1024",
+      "passed": 8,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "migration",
+      "style": "pixel",
+      "resolution": "758x1024",
+      "passed": 8,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "migration",
+      "style": "swiss",
+      "resolution": "758x1024",
+      "passed": 8,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "weather",
+      "style": "all",
+      "resolution": "1072x1448",
+      "passed": 901,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "themes",
+      "style": "all",
+      "resolution": "1072x1448",
+      "passed": 152,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "cover",
+      "style": "all",
+      "resolution": "1072x1448",
+      "passed": 110,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "layout",
+      "style": "classic",
+      "resolution": "1072x1448",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "layout",
+      "style": "pixel",
+      "resolution": "1072x1448",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "layout",
+      "style": "swiss",
+      "resolution": "1072x1448",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "statistics",
+      "style": "classic",
+      "resolution": "1072x1448",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "statistics",
+      "style": "pixel",
+      "resolution": "1072x1448",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "statistics",
+      "style": "swiss",
+      "resolution": "1072x1448",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "migration",
+      "style": "classic",
+      "resolution": "1072x1448",
+      "passed": 8,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "migration",
+      "style": "pixel",
+      "resolution": "1072x1448",
+      "passed": 8,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "migration",
+      "style": "swiss",
+      "resolution": "1072x1448",
+      "passed": 8,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "weather",
+      "style": "all",
+      "resolution": "1440x1920",
+      "passed": 901,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "themes",
+      "style": "all",
+      "resolution": "1440x1920",
+      "passed": 152,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "cover",
+      "style": "all",
+      "resolution": "1440x1920",
+      "passed": 110,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "layout",
+      "style": "classic",
+      "resolution": "1440x1920",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "layout",
+      "style": "pixel",
+      "resolution": "1440x1920",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "layout",
+      "style": "swiss",
+      "resolution": "1440x1920",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "statistics",
+      "style": "classic",
+      "resolution": "1440x1920",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "statistics",
+      "style": "pixel",
+      "resolution": "1440x1920",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "statistics",
+      "style": "swiss",
+      "resolution": "1440x1920",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "migration",
+      "style": "classic",
+      "resolution": "1440x1920",
+      "passed": 8,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "migration",
+      "style": "pixel",
+      "resolution": "1440x1920",
+      "passed": 8,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "migration",
+      "style": "swiss",
+      "resolution": "1440x1920",
+      "passed": 8,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "weather",
+      "style": "all",
+      "resolution": "1920x1440",
+      "passed": 901,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "themes",
+      "style": "all",
+      "resolution": "1920x1440",
+      "passed": 152,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "cover",
+      "style": "all",
+      "resolution": "1920x1440",
+      "passed": 110,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "layout",
+      "style": "classic",
+      "resolution": "1920x1440",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "layout",
+      "style": "pixel",
+      "resolution": "1920x1440",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "layout",
+      "style": "swiss",
+      "resolution": "1920x1440",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "statistics",
+      "style": "classic",
+      "resolution": "1920x1440",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "statistics",
+      "style": "pixel",
+      "resolution": "1920x1440",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "statistics",
+      "style": "swiss",
+      "resolution": "1920x1440",
+      "passed": 57,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "migration",
+      "style": "classic",
+      "resolution": "1920x1440",
+      "passed": 8,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "migration",
+      "style": "pixel",
+      "resolution": "1920x1440",
+      "passed": 8,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "migration",
+      "style": "swiss",
+      "resolution": "1920x1440",
+      "passed": 8,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "suite": "network",
+      "style": "all",
+      "resolution": "1440x1920",
+      "passed": 26,
+      "failed": 0,
+      "exit": 0
+    }
+  ]
+}
