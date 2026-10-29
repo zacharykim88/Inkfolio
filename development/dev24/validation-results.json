@@ -1,0 +1,142 @@
+{
+  "source_sha256": "09421caa2df850d6bfc9f03ccc1205fe94491f31d97ac416079e9b96b19d830d",
+  "passed": 411,
+  "failed": 0,
+  "results": [
+    {
+      "runtime": "runtime",
+      "suite": "paper",
+      "resolution": "600x800",
+      "profile": "all",
+      "passed": 31,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "runtime": "runtime",
+      "suite": "development",
+      "resolution": "600x800",
+      "profile": "all",
+      "passed": 14,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "runtime": "runtime",
+      "suite": "paper",
+      "resolution": "758x1024",
+      "profile": "all",
+      "passed": 31,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "runtime": "runtime",
+      "suite": "development",
+      "resolution": "758x1024",
+      "profile": "all",
+      "passed": 14,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "runtime": "runtime",
+      "suite": "paper",
+      "resolution": "1072x1448",
+      "profile": "all",
+      "passed": 31,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "runtime": "runtime",
+      "suite": "development",
+      "resolution": "1072x1448",
+      "profile": "all",
+      "passed": 14,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "runtime": "runtime",
+      "suite": "paper",
+      "resolution": "1440x1920",
+      "profile": "all",
+      "passed": 31,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "runtime": "runtime",
+      "suite": "development",
+      "resolution": "1440x1920",
+      "profile": "all",
+      "passed": 14,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "runtime": "runtime",
+      "suite": "paper",
+      "resolution": "1920x1440",
+      "profile": "all",
+      "passed": 31,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "runtime": "runtime",
+      "suite": "development",
+      "resolution": "1920x1440",
+      "profile": "all",
+      "passed": 14,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "runtime": "runtime",
+      "suite": "localization",
+      "resolution": "1440x1920",
+      "profile": "en_US",
+      "passed": 47,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "runtime": "runtime",
+      "suite": "localization",
+      "resolution": "1440x1920",
+      "profile": "touch_en_US",
+      "passed": 47,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "runtime": "runtime2025",
+      "suite": "paper",
+      "resolution": "1440x1920",
+      "profile": "touch_en_US",
+      "passed": 31,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "runtime": "runtime2025",
+      "suite": "development",
+      "resolution": "1440x1920",
+      "profile": "touch_en_US",
+      "passed": 14,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "runtime": "runtime2025",
+      "suite": "localization",
+      "resolution": "1440x1920",
+      "profile": "touch_en_US",
+      "passed": 47,
+      "failed": 0,
+      "exit": 0
+    }
+  ]
+}
