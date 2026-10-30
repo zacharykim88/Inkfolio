@@ -1,0 +1,22 @@
+InkFolio
+v1.3.0 | October 30, 2026
+
+A lock-screen plugin for KOReader. Reading cards show book covers, Douban ratings, reading progress, time, pages, and word counts, with reading goals, Douban monthly rankings, local weather, and screenshots.
+
+Choose Receipt, Pixel, Modern, or Cover, adjust the appearance with live previews, and switch between Simplified Chinese and English.
+
+Compatibility
+• Kobo Sage and Kindle: tested on real devices.
+• PocketBook: requires KOReader; sleep screens depend on device support. Not tested on real devices.
+• Android phones and e-readers: previews and screenshots may work with official KOReader builds that support user patches. Cannot replace the system lock screen. Not tested on real devices.
+• F-Droid builds of KOReader do not support the required user patches.
+
+Design and development: zacharykim88
+Development assistance: OpenAI Codex
+
+Credits
+Estela-Zelin84/KOReader_Book-Receipt
+u/hundredpercentcocoa
+omer-faruq/koreader-user-patches
+
+Code: GPL-3.0. See the included notices for font licenses.

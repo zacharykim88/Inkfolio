@@ -1,6 +1,6 @@
 # 字体来源与授权
 
-InkFolio v1.2.0 完整包仅分发当前皮肤所需的附加字体，未修改字体文件。代码采用 GPL-3.0；各字体继续遵循各自的 SIL Open Font License 1.1。
+InkFolio v1.3.0 完整包仅分发当前皮肤所需的附加字体，未修改字体文件。代码采用 GPL-3.0；各字体继续遵循各自的 SIL Open Font License 1.1。
 
 ## 小票：香萃打字机体 W40
 
@@ -18,9 +18,9 @@ InkFolio v1.2.0 完整包仅分发当前皮肤所需的附加字体，未修改�
 - SHA256：`db40edf0cc1e446bfe1ce75d5abb4d7c499ace96379b8a0f5f761bd3de8335eb`。
 - 保留官方来源记录 `FusionPixel-SOURCE.json`、主许可证及 `FusionPixel-Licenses/` 下的上游许可文件。
 
-## 现代与系统字体
+## 现代、封面与系统字体
 
-现代皮肤使用 KOReader 自带的 Noto Sans 及中文回退字体。本包不重复分发 KOReader 系统字体，保留它们在 KOReader 中的原始授权。
+现代和封面皮肤使用 KOReader 自带的 Noto Sans 及中文回退字体；封面英文书名使用自带 Noto Serif Italic。本包不重复分发 KOReader 系统字体，保留它们在 KOReader 中的原始授权。
 
 ## 升级说明
 

@@ -1,9 +1,9 @@
--- InkFolio v1.1.0 / KOReader user patch
+-- InkFolio v1.3.0 / KOReader user patch
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Based on Estela-Zelin84/KOReader_Book-Receipt (GNU GPL v3).
 -- Upstream credits u/hundredpercentcocoa and omer-faruq/koreader-user-patches.
 -- Modifications and design: zacharykim88, 2026-10-10. Developed with OpenAI Codex.
--- Three UI styles; shared book-library metadata collection and permanent cache.
+-- Four UI styles; shared book-library metadata collection and permanent cache.
 -- Network code must never turn Wi-Fi on automatically.
 local Blitbuffer = require('ffi/blitbuffer')
 local CenterContainer = require('ui/widget/container/centercontainer')
@@ -40,33 +40,829 @@ local ffiUtil = require('ffi/util')
 local logger = require('logger')
 local util = require('util')
 local _ = require('gettext')
+-- InkFolio has its own language preference; never replace KOReader's gettext.
+local L
 local Screen = Device.screen
 local Inkfolio = {}
-local VERSION = '1.2.0'
-local RELEASE_DATE = '2026-10-23'
-local BUILD_ID='release-20261023-v1.2.0'
+local VERSION = '1.3.0'
+local RELEASE_DATE = '2026-10-30'
+local BUILD_ID='release-20261030-v1.3.0'
 
--- Three skins share one data path, one settings tree and one renderer.
-Inkfolio.UI_STYLES={{id='classic',label='小票'},{id='pixel',label='像素'},{id='swiss',label='现代'}}
+-- Exact UI messages only: book metadata, parser tokens and user input are never translated.
+local EN = {
+    ["月榜页面缺少标题"]="Monthly rankings page has no title",
+    ["月榜月份重复"]="Conflicting month headings in monthly rankings",
+    ["月榜月份或分类标识不匹配，可能受到访问限制"]="Monthly rankings month or category doesn't match; access may be restricted",
+    ["月榜发布日期不一致"]="Monthly rankings pages have different publication dates",
+    ["月榜发布日期缺失或无效"]="Monthly rankings publication date is missing or invalid",
+    ["月榜没有图书条目"]="No books in monthly rankings",
+    ["月榜条目字段不完整或排名无效"]="Monthly rankings contain incomplete entries or invalid ranks",
+    ["月榜分页链接无效"]="Invalid monthly rankings page link",
+    ["册数说明相互冲突"]="Conflicting volume counts",
+    ["作者页面身份无法确认"]="Couldn't verify the author page",
+    ["详情页没有可提取的内容简介"]="No description available from book details",
+    ["Bing检索"]="Bing search",
+    ["InkFolio: 月榜缓存结构损坏"]="InkFolio: invalid monthly rankings cache",
+    ["InkFolio: 联网计划记录损坏"]="InkFolio: invalid network schedule",
+    ["InkFolio: 天气缓存结构损坏"]="InkFolio: invalid weather cache",
+    ["未设置城市"]="No location selected",
+    ["InkFolio UI风格设置无效："]="InkFolio: invalid appearance setting: ",
+    ["”字体无法加载：\n"]="” font could not be loaded:\n",
+    ["\n请安装随包 fonts 中的字体，再完全重启 KOReader。"]="\nInstall the fonts included with InkFolio, then restart KOReader.",
+    ["InkFolio 设置文件路径缺失"]="InkFolio: settings file path is missing",
+    ["InkFolio 设置保存结果无效"]="InkFolio: could not verify saved settings",
+    ["InkFolio 设置未能保存："]="InkFolio: could not save setting: ",
+    ["InkFolio UI风格无效："]="InkFolio: invalid style: ",
+    ["UI风格"]="Style",
+    ["文件名（内部标题为空）"]="Filename (no title in book metadata)",
+    ["InkFolio: 搜索书名设置损坏"]="InkFolio: invalid search title settings",
+    ["InkFolio: 搜索书名设置条目损坏"]="InkFolio: invalid search title entry",
+    ["InkFolio: 暂停记录损坏"]="InkFolio: invalid paused-task record",
+    ["InkFolio: 图书匹配设置损坏"]="InkFolio: invalid book match settings",
+    ["InkFolio: 图书确认记录损坏"]="InkFolio: invalid confirmed match record",
+    ["InkFolio: 待确认记录损坏"]="InkFolio: invalid pending match record",
+    ["InkFolio: 待确认图书身份损坏"]="InkFolio: invalid book identity in pending matches",
+    ["InkFolio: 待确认候选损坏"]="InkFolio: invalid match candidate",
+    ["匹配记录保存失败，请检查设置目录。"]="Couldn't save the match. Check the settings folder.",
+    ["获取进行中，请结束后再修改搜索书名。"]="Wait for the current update to finish before changing the search title.",
+    ["搜索书名保存失败，请检查设置目录是否可写。"]="Couldn't save the search title. Check that the settings folder is writable.",
+    ["InkFolio: 信息状态记录损坏"]="InkFolio: invalid update status record",
+    ["InkFolio: 天气状态记录损坏"]="InkFolio: invalid weather status record",
+    ["待用户确认"]="Needs review",
+    ["成功"]="Updated",
+    ["部分成功"]="Partially Updated",
+    ["失败"]="Failed",
+    ["已取消"]="Canceled",
+    ["已中断"]="Interrupted",
+    ["缓存复用"]="Using cached data",
+    ["InkFolio: 信息状态条目损坏"]="InkFolio: invalid status entry",
+    ["InkFolio: 信息状态原因损坏"]="InkFolio: invalid status reason",
+    ["InkFolio: 信息状态时间损坏"]="InkFolio: invalid status timestamp",
+    ["InkFolio: 信息状态标识损坏"]="InkFolio: invalid status identifier",
+    ["InkFolio: 信息状态历史超过限制"]="InkFolio: update history exceeds its limit",
+    ["InkFolio: 信息状态历史类型损坏"]="InkFolio: invalid update history type",
+    ["未记录"]="Not recorded",
+    ["无"]="None",
+    ["其他错误（原文仅本机可见）"]="Other error (details available on this device only)",
+    ["信息状态保存失败"]="Couldn't save update status",
+    ["诊断目录无法创建"]="Couldn't create the diagnostics folder",
+    ["日志轮换失败"]="Couldn't rotate the log",
+    ["日志写入失败"]="Couldn't write to the log",
+    ["详细日志写入失败"]="Couldn't write to the detailed log",
+    ["天气任务"]="Weather update",
+    ["图书任务"]="Book update",
+    ["开始"]="Started",
+    ["批次任务"]="Batch update",
+    ["InkFolio: 诊断记录损坏"]="InkFolio: invalid diagnostic record",
+    ["设置选项"]="Setting",
+    ["InkFolio 设置"]="InkFolio Settings",
+    ["显示内容"]="Content",
+    ["图书信息"]="Book Details",
+    ["阅读进度"]="Reading Progress",
+    ["阅读摘要"]="Reading Summary",
+    ["外观调整"]="Appearance",
+    ["联网设置"]="Online Services",
+    ["天气城市"]="Weather Location",
+    ["天气请求"]="Weather request",
+    ["显示天气"]="Show Weather",
+    ["显示日期"]="Show Date",
+    ["阅读目标"]="Reading Goals",
+    ["书库目录"]="Library Folder",
+    ["底部文字"]="Footer Text",
+    ["保存截图"]="Save Screenshot",
+    ["开发者选项"]="Developer Options",
+    ["关于"]="About",
+    ["诊断信息"]="Diagnostics",
+    ["统计说明"]="About Reading Stats",
+    ["显示阅读摘要"]="Show Reading Summary",
+    ["摘要内容（最多2项）"]="Summary Items (up to 2)",
+    ["周期摘要指标"]="Summary Metrics",
+    ["阅读图表（最多2项）"]="Reading Charts (up to 2)",
+    ["全局本周"]="All Books This Week",
+    ["全局本月"]="All Books This Month",
+    ["时长＋字数"]="Time + Words",
+    ["时长＋页数"]="Time + Pages",
+    ["周期第二项"]="Secondary Metric",
+    ["趋势图"]="Trends",
+    ["字数"]="Words",
+    ["页数"]="Pages",
+    ["今日"]="Today",
+    ["本周"]="This Week",
+    ["本月"]="This Month",
+    ["估算已读"]="Est. Words Read",
+    ["本次唤醒"]="This Session",
+    ["详细日志"]="Detailed Logging",
+    ["进度弹窗"]="Update Progress",
+    ["复现记录"]="Record Actions",
+    ["允许联网"]="Allow Online Updates",
+    ["更新信息"]="Update Information",
+    ["信息状态"]="Update Status",
+    ["重新匹配本书"]="Find a Match for This Book",
+    ["解除本书匹配"]="Remove Confirmed Match",
+    ["启用休眠显示"]="Show on Sleep Screen",
+    ["评分"]="Rating",
+    ["豆瓣月榜"]="Douban Monthly Rankings",
+    ["预计剩余"]="Time Left",
+    ["本书已读"]="Words Read in This Book",
+    ["唤醒已读"]="Words Read This Session",
+    ["显示摘要"]="Show Summary",
+    ["本书今日"]="This Book Today",
+    ["本书累计"]="This Book Total",
+    ["全局今日"]="All Books Today",
+    ["全局累计"]="All-Time Total",
+    ["本周时长柱状图"]="Weekly Reading Time",
+    ["本月时长柱状图"]="Monthly Reading Time",
+    ["小票渲染"]="Render reading card",
+    ["外观保存"]="Save appearance",
+    ["外观调整操作"]="Adjust appearance",
+    ["菜单返回"]="Back in menu",
+    ["菜单关闭"]="Close menu",
+    ["设置关闭"]="Close settings",
+    ["休眠"]="Sleep",
+    ["唤醒"]="Wake",
+    ["匹配认可"]="Confirm book match",
+    ["暂不采用"]="Skip Match",
+    ["重新检索"]="Search Again",
+    ["导出预览"]="Preview Export",
+    ["复制诊断"]="Copy Diagnostics",
+    ["导出诊断"]="Export Diagnostics",
+    ["诊断保存失败"]="Couldn't save diagnostics",
+    ["外部调用"]="External call",
+    ["异常记录失败"]="Couldn't record the error",
+    ["接口不可用"]="API unavailable",
+    ["读取失败"]="Couldn't read data",
+    ["屏幕方向："]="Orientation: ",
+    ["横屏"]="Landscape",
+    ["竖屏"]="Portrait",
+    ["屏幕DPI："]="Screen DPI: ",
+    ["界面缩放（100单位）："]="UI scale (100 units): ",
+    ["休眠显示支持："]="Sleep screen supported: ",
+    ["休眠显示选择："]="Sleep screen: ",
+    ["其他"]="Other",
+    ["外观宽度："]="Card width: ",
+    ["字号倍率："]="Font scale: ",
+    ["整体比例："]="Overall scale: ",
+    ["背景："]="Background: ",
+    ["首次比例适配："]="Initial auto-fit: ",
+    ["等待图书数据"]="Waiting for book data",
+    ["未待处理"]="No pending adjustment",
+    ["进度弹窗："]="Update progress: ",
+    ["开启"]="On",
+    ["关闭"]="Off",
+    ["复现记录："]="Action recording: ",
+    ["诊断保存："]="Diagnostics saved: ",
+    ["未发现错误"]="No errors found",
+    ["最近小票尺寸：%d×%d；屏幕：%d×%d；%s"]="Last card: %d×%d; screen: %d×%d; %s",
+    ["完整适屏"]="Fits screen",
+    ["超出屏幕"]="Exceeds screen",
+    ["最近小票尺寸：未渲染"]="Last card: not rendered",
+    ["今日阅读"]="Today",
+    ["本周阅读"]="This Week",
+    ["本月阅读"]="This Month",
+    ["摘要组合："]="Summary selection: ",
+    ["周期摘要指标：时长＋"]="Summary metrics: Time + ",
+    ["阅读图表："]="Reading charts: ",
+    ["每日记录保存："]="Daily records saved: ",
+    ["UI风格："]="Style: ",
+    ["界面字体 "]="Font: ",
+    ["无法加载"]="Couldn't load",
+    ["工具图标："]="Tools icon: ",
+    ["当前界面："]="Current view: ",
+    ["阅读"]="Reading",
+    ["非阅读"]="Not reading",
+    ["当前图书格式："]="Book format: ",
+    ["其他格式"]="Other format",
+    ["无当前图书"]="No book open",
+    ["复现操作（最多60条）："]="Recent actions (up to 60):",
+    ["InkFolio异常（最多10条）："]="InkFolio errors (up to 10):",
+    ["没有InkFolio异常记录；启动或原生崩溃可能需要脱敏crash.log。"]="No InkFolio errors recorded. Startup or native crashes may require a redacted crash.log.",
+    ["诊断导出预览（脱敏）"]="Export Preview (Redacted)",
+    ["复制"]="Copy",
+    ["导出"]="Export",
+    ["InkFolio诊断报告（默认脱敏）"]="InkFolio Diagnostic Report (Redacted)",
+    ["InkFolio版本：v"]="InkFolio version: v",
+    ["构建标识："]="Build: ",
+    ["KOReader版本："]="KOReader version: ",
+    ["设备："]="Device: ",
+    ["未提供"]="Not provided",
+    ["分辨率："]="Resolution: ",
+    ["允许联网："]="Online updates allowed: ",
+    ["是"]="Yes",
+    ["否"]="No",
+    ["网络连接："]="Network: ",
+    ["已连接"]="Connected",
+    ["未连接"]="Disconnected",
+    ["阅读目标："]="Reading goal: ",
+    ["启用"]="Enabled",
+    ["停用"]="Disabled",
+    ["目标值："]="Target: ",
+    ["网络任务："]="Network task: ",
+    ["休眠中"]="Sleeping",
+    ["请求执行中"]="Request in progress",
+    ["任务进行中"]="Update in progress",
+    ["空闲"]="Idle",
+    ["任务类型："]="Task type: ",
+    ["天气"]="Weather",
+    ["图书"]="Books",
+    ["当前请求阶段："]="Request stage: ",
+    ["图书任务进度："]="Book update progress: ",
+    ["扫描中，尚未确定总数"]="Scanning; total not yet available",
+    ["无进行中的图书任务"]="No book update in progress",
+    ["图书缓存条目："]="Cached books: ",
+    ["待确认图书："]="Books to review: ",
+    ["用户确认匹配关系："]="Confirmed matches: ",
+    ["含有效评分的缓存："]="Cached ratings: ",
+    ["含缓存简介的条目："]="Cached descriptions: ",
+    ["月榜分类："]="Monthly rankings category: ",
+    ["月榜锁屏轮换："]="Rotate rankings on sleep: ",
+    ["月榜显示位置："]="Current rankings group: ",
+    ["月榜缓存："]="Monthly rankings cache: ",
+    ["%d年%d月"]="%d-%02d",
+    ["无有效缓存"]="No valid cache",
+    ["月榜最近尝试："]="Last rankings update attempt: ",
+    ["月榜最近结果："]="Last rankings update result: ",
+    ["未获取"]="Not yet fetched",
+    ["月榜错误："]="Monthly rankings error: ",
+    ["详细日志："]="Detailed logging: ",
+    ["记录保存状态（本次运行）："]="Record storage (this run): ",
+    ["未发现保存错误"]="No save errors",
+    ["日志写入状态（本次运行）："]="Log storage (this run): ",
+    ["未发现写入错误"]="No write errors",
+    ["当前运行错误："]="Current error: ",
+    ["最近任务结果（最多20条）："]="Recent updates (up to 20):",
+    ["批次"]="Batch",
+    ["尚无任务记录"]="No updates recorded",
+    ["最近失败（历史记录）："]="Most recent failure:",
+    ["未记录具体原因"]="No reason recorded",
+    ["本次InkFolio异常原文（仅本机）："]="Full InkFolio error (this device only):",
+    ["复制内容可能仅进入设备内部剪贴板；向手机反馈请导出报告。"]="Copied text may only be available on this device. Export a report to share it with another device.",
+    ["InkFolio诊断信息（错误原文仅本机显示，复制／导出均脱敏）"]="InkFolio diagnostics (full errors stay on this device; copied and exported reports are redacted)",
+    ["此设备的剪贴板接口不可用，请导出诊断报告。"]="Clipboard access isn't available on this device. Export a diagnostic report instead.",
+    ["剪贴板拒绝写入"]="Couldn't write to the clipboard",
+    ["已复制脱敏诊断信息到设备剪贴板，可能仅在本设备内可粘贴。"]="Redacted diagnostics copied. The clipboard may only be available on this device.",
+    ["复制失败："]="Couldn't copy: ",
+    ["报告写入失败"]="Couldn't write the report",
+    ["诊断报告导出失败："]="Couldn't export diagnostics: ",
+    ["已导出脱敏报告：\n"]="Redacted report saved:\n",
+    ["InkFolio诊断信息"]="InkFolio Diagnostics",
+    ["错误原文不复制，请使用“复制”按钮获取脱敏报告。"]="Full errors aren't copied. Use Copy to get a redacted report.",
+    ["刷新"]="Refresh",
+    ["当前图书信息"]="Current Book",
+    ["书名："]="Title: ",
+    ["搜索书名："]="Search title: ",
+    ["（自定义）"]=" (custom)",
+    ["（默认）"]=" (default)",
+    ["书名依据："]="Title source: ",
+    ["书名检查："]="Title check: ",
+    ["匹配状态：待用户确认（"]="Match status: needs review (",
+    ["个候选）；"]=" candidates); ",
+    ["身份核验："]="Identity check: ",
+    ["用户确认匹配"]="Confirmed by you",
+    ["详情页核验"]="Verified against book details",
+    ["历史缓存，未经新规则核验"]="Legacy cache; not verified with current rules",
+    ["匹配图书："]="Matched title: ",
+    ["核验来源："]="Verified source: ",
+    ["缓存状态：搜索书名或卷册范围已变化，待重新获取"]="Cache: search title or volume range changed; update needed",
+    ["评分："]="Rating: ",
+    ["已匹配分册均分（"]="Average of matched volumes (",
+    ["册）"]=" volumes)",
+    ["参与平均版本："]="Editions included: ",
+    ["%s均分：%.2f/10；已匹配版本：%d"]="%s average: %.2f/10; matched editions: %d",
+    ["第"]="Vol. ",
+    ["评分最近成功："]="Rating last updated: ",
+    ["评分来源："]="Rating source: ",
+    [" 第"]=" Vol. ",
+    ["评分来源：存在豆瓣链接，具体评分来源明细未记录"]="Rating source: Douban link available; individual rating sources not recorded",
+    ["评分：尚无有效缓存"]="Rating: no valid cache",
+    ["简介来源：书籍文件内元数据（没有联网获取时间）"]="Description source: book metadata (no online update timestamp)",
+    ["简介来源："]="Description source: ",
+    ["豆瓣详情页 "]="Douban book details: ",
+    ["历史缓存，来源未记录"]="Legacy cache; source not recorded",
+    ["简介取自："]="Description from: ",
+    ["标题未记录"]="Title not recorded",
+    ["），不代表全集简介"]="); does not describe the full collection",
+    ["简介最近成功："]="Description last updated: ",
+    ["简介："]="Description: ",
+    ["来源确认没有简介"]="Source has no description",
+    ["字段获取失败，允许重试"]="Couldn't fetch this field; retry available",
+    ["尚无可显示内容"]="Nothing to display yet",
+    ["缓存记录时间："]="Cache timestamp: ",
+    ["（旧记录不等于各字段的成功时间）"]=" (legacy timestamps may not reflect when each field was updated)",
+    ["最近尝试："]="Last attempt: ",
+    ["最近结果："]="Last result: ",
+    ["获取中"]="Updating",
+    ["上次任务未完成"]="Previous update didn't finish",
+    ["原因："]="Reason: ",
+    ["最近尝试：未记录"]="Last attempt: not recorded",
+    ["尚无最近阅读书籍"]="No recently read book",
+    ["\n月榜来源：豆瓣读书 · "]="\nMonthly rankings source: Douban Books · ",
+    ["月榜"]=" Monthly Rankings",
+    ["锁屏轮换："]="Rotate on sleep: ",
+    ["榜单月份："]="Rankings for: ",
+    ["暂无有效缓存"]="No valid cache",
+    ["来源链接："]="Source URL: ",
+    ["最近成功："]="Last updated: ",
+    ["\n天气来源：中国气象局中央气象台（nmc.cn）"]="\nWeather source: China Meteorological Administration, National Meteorological Center (nmc.cn)",
+    ["城市："]="Location: ",
+    ["缓存获取日期："]="Cache date: ",
+    ["今日预报："]="Today's forecast: ",
+    ["明日预报："]="Tomorrow's forecast: ",
+    ["未选择城市"]="No location selected",
+    ["信息来源与状态"]="Sources & Update Status",
+    ["摘要指标设置无效"]="Invalid summary metric",
+    ["本周全局阅读时长"]="Reading Time This Week",
+    ["本月全局阅读时长"]="Reading Time This Month",
+    ["本周字数柱状图"]="Weekly Word Count",
+    ["本周全局阅读字数"]="Words Read This Week",
+    ["本月字数柱状图"]="Monthly Word Count",
+    ["本月全局阅读字数"]="Words Read This Month",
+    ["阅读图表设置无效"]="Invalid chart settings",
+    ["阅读图表设置重复"]="Duplicate chart selection",
+    ["阅读图表选项无效"]="Invalid chart selection",
+    ["统计周期无效"]="Invalid reporting period",
+    ["请开启 KOReader 阅读统计"]="Turn on KOReader reading statistics",
+    ["阅读统计保存失败"]="Couldn't save reading statistics",
+    ["暂无阅读统计数据库"]="No reading statistics database yet",
+    ["阅读统计无法打开"]="Couldn't open reading statistics",
+    ["阅读时长读取失败"]="Couldn't read reading time",
+    ["时长统计周期无效"]="Invalid reading time period",
+    ["无效统计时间"]="Invalid timestamp",
+    ["无效统计时长"]="Invalid reading time",
+    ["%d时%d分"]="%dh %dm",
+    ["%d分钟"]="%d min",
+    ["获取信息"]="Updating Information",
+    ["正在扫描书库"]="Scanning library…",
+    ["%d / %d 个文件"]="%d / %d files",
+    ["已处理 %d / %d 本"]="Processed %d / %d books",
+    ["已更新 %d 本，未完整获取 %d 本"]="Updated %d books; %d incomplete",
+    ["忽略"]="Hide",
+    ["取消"]="Cancel",
+    ["获取天气信息"]="Updating Weather",
+    ["手动获取图书信息"]="Updating Book Information",
+    ["自动获取图书信息"]="Updating Book Information Automatically",
+    ["正在请求天气"]="Requesting weather…",
+    ["上"]="Upper",
+    ["中"]="Middle",
+    ["下"]="Lower",
+    ["一"]="Mon",
+    ["二"]="Tue",
+    ["三"]="Wed",
+    ["四"]="Thu",
+    ["五"]="Fri",
+    ["六"]="Sat",
+    ["文件名与内部标题交叉确认"]="Filename and book metadata agree",
+    ["缺少作者信息，未自动采用文件名中的简短书名"]="No author information; the shortened filename wasn't used for matching",
+    ["文件名与内部标题不能相互确认，未自动采用文件名"]="Filename couldn't be verified against metadata; it wasn't used for matching",
+    ["缺少 HTML 解析组件"]="HTML parser unavailable",
+    ["详情页字段解析失败"]="Couldn't parse book details",
+    ["详情页没有有效评分，可能未评分或访问被限制"]="No valid rating; the book may be unrated or access may be restricted",
+    ["豆瓣详情页"]="Douban book details",
+    ["豆瓣搜索页"]="Douban search results",
+    ["休眠中，天气获取已中断"]="Weather update interrupted by sleep",
+    ["天气获取已中断"]="Weather update interrupted",
+    ["休眠中，月榜获取已中断"]="Monthly rankings update interrupted by sleep",
+    ["月榜任务已中断"]="Monthly rankings update interrupted",
+    ["休眠中，任务未启动"]="Request not started: device is sleeping",
+    ["任务已失效"]="Task is no longer valid",
+    ["豆瓣详情"]="Douban book details",
+    ["成功，响应字节 "]="Success; response bytes: ",
+    ["豆瓣月榜分类设置无效"]="Invalid monthly rankings category",
+    ["月榜字段解析失败"]="Couldn't parse monthly rankings",
+    ["月榜轮换位置无效"]="Invalid rankings rotation position",
+    ["正在获取豆瓣月榜"]="Fetching Douban monthly rankings…",
+    ["上次月榜任务未完成"]="Previous rankings update didn't finish",
+    ["月榜获取失败"]="Couldn't update monthly rankings",
+    ["月榜分页超过安全上限"]="Monthly rankings exceed the page limit",
+    ["月榜分页月份不一致"]="Monthly rankings pages refer to different months",
+    ["月榜分页条目重复或排名无效"]="Duplicate entries or invalid rankings in monthly rankings",
+    ["完整月榜校验失败"]="Couldn't validate the complete monthly rankings",
+    ["月榜请求未启动"]="Monthly rankings request didn't start",
+    ["正在更新月榜"]="Updating monthly rankings…",
+    ["月榜更新中断："]="Monthly rankings update interrupted: ",
+    ["任务未完成"]="Update didn't finish",
+    ["月榜更新失败："]="Couldn't update monthly rankings: ",
+    ["月榜缓存无效，请重新获取"]="Invalid monthly rankings cache. Update it to continue.",
+    ["作者"]="Author",
+    ["出版社"]="Publisher",
+    ["套装册数说明相互冲突，需要用户确认"]="Conflicting volume counts; review required",
+    ["套装无法确认属于文件卷册范围"]="Couldn't verify that this set matches the file's volume range",
+    ["套装册数或收录范围无法确认"]="Couldn't verify the volume count or contents of this set",
+    ["作者作品合集缺少可核验的收录目录或结果不在目录中"]="Couldn't verify the collection's contents or find this title in them",
+    ["分册不在文件卷册范围内"]="Volume falls outside the file's volume range",
+    ["系列已确认，但分册序号无法确认"]="Series verified, but the volume number couldn't be confirmed",
+    ["结果缺少可核验的套装或系列关系"]="No verifiable relationship to this set or series",
+    ["主书名或特定校注版本不一致"]="Title or annotated edition doesn't match",
+    ["缺少可验证的作者或有效ISBN"]="No verifiable author or valid ISBN",
+    ["作者或贡献者身份无法确认：需核验详情或别名资料"]="Couldn't verify the author or contributor; book details or aliases need review",
+    ["分册匹配需要明确作者"]="An author is required to match individual volumes",
+    ["身份核验"]="Verifying identity",
+    ["候选排除"]="Match excluded",
+    ["简介字段获取失败"]="Couldn't fetch the description",
+    ["搜索没有返回可读取的图书候选"]="No usable book matches found",
+    ["；有"]="; ",
+    ["个候选待用户确认"]=" candidates need review",
+    ["正在核验作者身份"]="Verifying author…",
+    ["作者资料请求失败："]="Couldn't fetch author information: ",
+    ["作者资料页面无法核验身份，可能受到访问限制"]="Couldn't verify the author; access may be restricted",
+    ["正在核验图书详情 "]="Verifying book details: ",
+    ["详情页没有有效评分"]="No valid rating in book details",
+    ["已确认条目的书名或作者发生变化，需要重新确认"]="The confirmed title or author changed. Review the match again.",
+    ["用户重新检索，等待确认"]="Search complete; review required",
+    ["详情请求未启动"]="Book details request didn't start",
+    ["正在补充搜索图书（Bing）"]="Searching Bing for more matches…",
+    ["补充搜索请求未启动"]="Additional search didn't start",
+    ["正在搜索图书（豆瓣）"]="Searching Douban…",
+    ["正在搜索图书（Bing）"]="Searching Bing…",
+    ["搜索请求未启动"]="Search request didn't start",
+    ["书库目录层级超过24层，扫描未完成："]="Library scan stopped: folders are nested more than 24 levels deep: ",
+    ["无法读取书库目录："]="Couldn't read library folder: ",
+    ["无法读取书库文件属性："]="Couldn't read library file attributes: ",
+    ["书库扫描失败："]="Library scan failed: ",
+    ["休眠中，任务已中断"]="Update interrupted by sleep",
+    ["任务已中断"]="Update interrupted",
+    ["用户取消本轮获取"]="Update canceled by user",
+    ["已取消获取，已保存的图书信息保留。"]="Update canceled. Previously saved book information is still available.",
+    ["获取已中断。"]="Update interrupted.",
+    ["获取结束：已处理 %d / %d 本，更新 %d 本，未完整获取 %d 本。"]="Update finished: processed %d / %d books, updated %d, incomplete %d.",
+    ["\n最近失败原因："]="\nMost recent failure: ",
+    ["获取结果缺少有效评分或链接"]="Result is missing a valid rating or URL",
+    ["未找到匹配且有评分的图书"]="No matching book with a rating found",
+    ["书库目录不可用，请在“InkFolio → 联网设置 → 书库目录”选择可读取的文件夹。没有发起联网请求。"]="Choose a readable folder in InkFolio → Online Services → Library Folder. No online requests were made.",
+    ["InkFolio: 封面天气选项无效"]="InkFolio: invalid Cover weather setting",
+    ["InkFolio: 无效天气日期"]="InkFolio: invalid forecast date",
+    ["InkFolio: 天气预报缓存结构损坏"]="InkFolio: invalid forecast cache",
+    ["天气数据JSON无法解析"]="Couldn't read the weather response",
+    ["天气数据接口返回异常"]="Weather service returned an invalid response",
+    ["天气数据城市不匹配或缺失"]="Forecast location is missing or doesn't match",
+    ["天气数据缺少请求日期的预报"]="No forecast for the requested date",
+    ["天气数据温度范围无效或缺失"]="Forecast temperatures are missing or invalid",
+    ["天气数据状态无效或缺失"]="Forecast condition is missing or invalid",
+    ["明日"]="Tomorrow",
+    [" 未选择城市"]=" No location selected",
+    ["获取中…"]="Updating…",
+    ["天气获取失败"]="Weather unavailable",
+    ["待联网更新"]="Waiting for connection",
+    ["正在获取"]="Fetching ",
+    ["今日 "]="Today ",
+    ["明日 "]="Tomorrow ",
+    ["天气获取中断"]="Weather update interrupted",
+    ["天气请求未启动"]="Weather request didn't start",
+    ["天气显示已关闭"]="Weather display is off",
+    ["插件联网已关闭，请先开启联网开关。"]="Online updates are off. Turn on Allow Online Updates to continue.",
+    ["已有查询正在进行，请稍后重试。"]="An update is already in progress. Try again when it finishes.",
+    ["当前图书信息不可读取，没有发起获取。"]="Couldn't read this book's information. No update was started.",
+    ["当前网络不可用，请在设备系统设置中连接网络后重试。"]="No network connection. Connect in your device settings, then try again.",
+    ["Wi-Fi 已开启，但尚未连接网络。请先连接后重试。"]="Wi-Fi is on but isn't connected. Connect to a network, then try again.",
+    ["当前 Wi-Fi 未连接，需要开启 Wi-Fi 才能手动更新图书信息。"]="Turn on Wi-Fi to update book information.",
+    ["开启 Wi-Fi"]="Turn On Wi-Fi",
+    ["Wi-Fi 连接失败，未执行手动更新。"]="Couldn't connect to Wi-Fi. No update was started.",
+    ["%.0f字"]="%.0f words",
+    ["分"]=" min",
+    ["日"]="Sun",
+    ["字数及每日记录损坏"]="Invalid word count or daily records",
+    ["每日新增字数无效"]="Invalid daily word count",
+    ["书籍文件无法读取"]="Couldn't read the book file",
+    ["正文不是文本"]="Book content isn't text",
+    ["正文含无效字符"]="Book content contains invalid characters",
+    ["正文位置失效"]="Reading position is no longer valid",
+    ["正文位置顺序错误"]="Reading positions are out of order",
+    ["正文重叠字数异常"]="Invalid word count in overlapping content",
+    ["格式不支持"]="Format not supported",
+    ["部分内容不支持字数统计"]="Word counts aren't available for some content",
+    ["当前正文位置无法读取"]="Couldn't read the current position",
+    ["本次字数记录不完整"]="This session's word count is incomplete",
+    ["正文位置无法读取"]="Couldn't read the text position",
+    ["正文根节点不支持"]="Text root isn't supported",
+    ["正文根节点无法读取"]="Couldn't read the text root",
+    ["正文边界无效"]="Invalid text boundaries",
+    ["全书正文无法读取"]="Couldn't read the full book text",
+    ["请先打开本书统计字数"]="Open this book to count its words",
+    ["阅读进度无效"]="Invalid reading progress",
+    ["字数记录保存失败"]="Couldn't save word counts",
+    ["字数无效"]="Invalid word count",
+    ["阅读页数读取失败"]="Couldn't read page counts",
+    ["无效阅读页数"]="Invalid page count",
+    ["当前图书没有统计记录"]="No reading statistics for this book",
+    ["时长"]="Time",
+    ["暂无时长记录"]="No reading time recorded",
+    ["部分日期没有记录"]="Some dates have no records",
+    ["暂无字数记录"]="No words recorded",
+    ["字数记录不完整"]="Incomplete word count",
+    ["当前页码与百分比表示阅读位置，跳页也会改变；不代表实际读过全部内容。估算已读为全书字数乘当前位置比例。预计剩余依据 KOReader 平均阅读速度计算。"]="Page number and percentage show your position in the book, including skipped pages. Estimated Read multiplies the book's word count by your current progress. Time Left uses KOReader's average reading speed.",
+    ["字数记录"]="Word Counts",
+    ["中文每字计一字，英文每单词计一字，不计标点和空白。实际记录来自可提取的正文；同次唤醒内同一内容去重，跨书累计，下次唤醒重新去重，重启 KOReader 也会开始新的会话。它表示翻阅量，不保证文字已被完整阅读。"]="Each Chinese character counts as one word; English text is counted by word. Punctuation and spaces are excluded. Counts use extractable body text. Revisited text is counted once per wake session, across all books. Sleep or a KOReader restart starts a new session. Counts reflect text you moved through, not proof that you read every word.",
+    ["今日、本周、本月字数从InkFolio开始记录时累计，不补录安装前的数据。全书估算字数不参与周期统计或目标；累计摘要沿用时长和页数。"]="Daily, weekly, and monthly word counts begin when InkFolio starts tracking. Earlier activity isn't added. Estimated book counts aren't included in these totals or goals. All-time summaries use time and pages.",
+    ["时长与页数"]="Time & Pages",
+    ["来自 KOReader 阅读统计，包含其保留的安装前历史；停留时间沿用原生记录规则。页数按周期内记录的图书与页面去重，并沿用原生分页换算；各日页数相加不一定等于累计页数。"]="Uses KOReader reading statistics, including any retained history from before InkFolio was installed. Reading time follows KOReader's rules. Pages are deduplicated by book and page within each period, using KOReader's page conversion. Adding daily page counts may not equal the all-time total.",
+    ["周期与图表"]="Periods & Charts",
+    ["数据状态"]="Data Availability",
+    ["0表示已有零值记录；—表示暂无记录或数据不可用。已记录表示统计不完整，数字仅覆盖现有记录。无记录不等于确认未读，也不等于确认数据丢失。"]="0 is a recorded zero. — means no record or unavailable data. Recorded marks incomplete totals based on the records available. Missing records don't necessarily mean no reading activity or lost data.",
+    ["图表短横表示零，斜线表示无记录，圆点表示当日字数记录不完整；未来日期留空。"]="In charts, a short dash means zero, a slash means no record, and a dot marks an incomplete daily word count. Future dates stay blank.",
+    ["显示与选择"]="Display Options",
+    ["摘要与趋势图各最多两项，独立选择；关闭显示阅读摘要会隐藏两者，不影响阅读目标。在摘要内容中选择数字摘要，在阅读图表中选择柱状图。周期摘要指标可选择时长＋字数或时长＋页数；累计与旧本书今日保持时长与页数；升级保留原有页数选择。"]="Choose up to two summaries and two charts independently. Turning off Show Reading Summary hides both, but keeps goals visible. Period summaries can show Time + Words or Time + Pages. All-time and legacy This Book Today summaries always show time and pages. Existing page selections are kept on upgrade.",
+    ["最近一次显示的统计状态"]="Last Displayed Statistics Status",
+    ["暂无异常状态记录；打开InkFolio 预览可更新。"]="No issues recorded. Open an InkFolio preview to update this status.",
+    ["每日"]="Daily",
+    ["每周"]="Weekly",
+    ["每月"]="Monthly",
+    ["阅读时长"]="Reading Time",
+    ["阅读字数"]="Words Read",
+    ["阅读目标设置损坏"]="Invalid reading goal settings",
+    ["阅读目标未能保存，请检查设置目录。"]="Couldn't save the reading goal. Check the settings folder.",
+    ["阅读目标周期或类型无效"]="Invalid goal period or type",
+    ["阅读目标设置键无效"]="Invalid goal setting key",
+    ["阅读目标值无效"]="Invalid goal target",
+    ["请先设置目标值"]="Set a target first",
+    ["阅读目标选项无效"]="Invalid goal option",
+    ["阅读目标类型无效"]="Invalid goal type",
+    ["目标值必须大于0且在有效范围内。"]="Enter a target greater than zero and within the supported range.",
+    ["阅读目标精度无效。"]="Invalid goal precision.",
+    ["未设置"]="Not Set",
+    ["暂无"]="No ",
+    ["记录"]=" recorded",
+    ["阅读字数目标（万字）"]="Word Goal (thousands)",
+    ["阅读时长目标（分钟）"]="Reading Time Goal (minutes)",
+    ["例如2.5代表2.5万字；以0.1万字为单位。"]="Enter thousands of words. For example, 25 means 25,000 words. Use increments of 1,000.",
+    ["启用阅读目标"]="Enable Reading Goal",
+    ["先选择周期、类型并填写目标值，再启用。切换到尚未设置的组合时自动停用；各组合的目标值分别保存。"]="Choose a period and type, then set a target before enabling the goal. Switching to a combination with no target turns the goal off. Targets are saved separately for each combination.",
+    ["目标周期"]="Goal Period",
+    ["按设备本地时间计算：每天零点、每周一零点及自然月月初开始新周期。"]="Periods follow local time: midnight each day, Monday each week, and the first of each month.",
+    ["目标类型"]="Goal Type",
+    ["统计全局阅读量。时长沿用KOReader阅读统计；字数按实际翻阅记录，同次唤醒去重，不补录历史字数。"]="Includes all books. Reading time comes from KOReader statistics. Words are counted as you move through text, once per wake session. Earlier activity isn't added.",
+    ["目标值"]="Target",
+    ["InkFolio: 卡片周边没有可检测区域"]="InkFolio: no area available to sample around the card",
+    ["InkFolio: 卡片宽度无效"]="InkFolio: invalid card width",
+    ["InkFolio: 卡片字号无效"]="InkFolio: invalid card font scale",
+    ["InkFolio: 封面底色无效"]="InkFolio: invalid cover background",
+    ["InkFolio: 卡片底色无效"]="InkFolio: invalid card background",
+    ["InkFolio: 未知文字层级"]="InkFolio: unknown text style",
+    ["未提供作者"]="Author unavailable",
+    ["InkFolio: 章节读取失败："]="InkFolio: couldn't read chapter: ",
+    ["暂无章节信息"]="Chapter unavailable",
+    ["%d / %d 页"]="%d / %d pages",
+    ["页"]=" pages",
+    [" · 已记录"]=" · Recorded",
+    ["字数 "]="Words ",
+    ["页数 "]="Pages ",
+    ["信息卡内容超出屏幕，请调整卡片宽度、字号或显示项目。"]="The card doesn't fit. Adjust its width, font size, or displayed content.",
+    ["InkFolio: 封面读取失败："]="InkFolio: couldn't read cover: ",
+    ["封面不可用"]="Cover unavailable",
+    ["未知文字层级"]="Unknown text style",
+    ["InkFolio: 顶栏文字缺少首行"]="InkFolio: header has no first line",
+    ["暂无评分"]="Not rated",
+    ["已匹配分册均分"]="Average Rating of Matched Volumes",
+    ["已匹配版本均分"]="Average Rating of Matched Editions",
+    ["记录不完整"]="Incomplete records",
+    ["目标 "]="Target ",
+    ["已记录"]="Recorded",
+    ["章节"]="Chapter",
+    ["当前页码"]="Current Page",
+    ["已记录 "]="Recorded ",
+    ["合计 "]="Total ",
+    ["日均 "]="Daily Avg. ",
+    [" · 合计 "]=" · Total ",
+    ["豆瓣月榜 · "]="Douban Monthly Rankings · ",
+    ["10.0分"]="10.0",
+    ["%.1f分"]="%.1f",
+    ["缓存 · "]="Cached · ",
+    ["小票内容超出屏幕，请减小整体比例、字号或宽度。"]="The card doesn't fit. Reduce its scale, font size, or width.",
+    ["无法获取阅读小票"]="Reading card unavailable",
+    ["尚未阅读书籍，打开一本书后即可显示InkFolio。"]="Open a book to start using InkFolio.",
+    ["最近阅读的书籍已移动或删除，请重新打开书籍。"]="Your most recent book was moved or deleted. Open it again to continue.",
+    ["最近阅读的书籍尚无InkFolio记录，请打开该书并返回主页一次。"]="No InkFolio record for your most recent book. Open it, then return to the library once.",
+    ["主页界面不可用"]="Library view unavailable",
+    ["InkFolio无法完整显示，请减小比例或检查字体。"]="InkFolio doesn't fit. Reduce the scale or check the fonts.",
+    ["截屏目录无法创建或访问"]="Couldn't create or access the screenshot folder",
+    ["截图文件写入失败"]="Couldn't save the screenshot",
+    ["InkFolio 截图失败："]="Couldn't save the InkFolio screenshot: ",
+    ["InkFolio 截图已保存：\n"]="InkFolio screenshot saved:\n",
+    ["此平台不支持 KOReader 休眠壁纸，可在阅读中打开小票预览。"]="This platform doesn't support KOReader sleep screens. You can preview InkFolio while reading.",
+    ["宽度"]="Width",
+    ["字号"]="Font Size",
+    ["比例"]="Scale",
+    ["请输入数值，最多保留一位小数。"]="Enter a number with no more than one decimal place.",
+    ["请输入 "]="Enter a value from ",
+    [" 之间的数值（%）。"]=" percent.",
+    ["输入 "]="Enter a value from ",
+    ["，最多保留一位小数。"]=". Use no more than one decimal place.",
+    ["预览"]="Preview",
+    ["InkFolio 外观 · "]="InkFolio Appearance · ",
+    ["风格"]="Style",
+    ["卡片宽度"]="Card Width",
+    ["卡片字号"]="Card Font Size",
+    ["封面底色"]="Cover Background",
+    ["背景"]="Background",
+    ["白色"]="White",
+    ["黑色"]="Black",
+    ["透明"]="Transparent",
+    ["卡片底色"]="Card Background",
+    ["自动"]="Auto",
+    ["深灰"]="Dark Gray",
+    ["获取进行中，请结束后再确认。"]="An update is in progress. Wait for it to finish before confirming a match.",
+    ["待确认结果已变化，请重新获取。"]="The pending results changed. Update them before continuing.",
+    ["候选没有有效评分，不能确认。"]="This result has no valid rating and can't be confirmed.",
+    ["确认保存失败，请检查设置目录。"]="Couldn't save your confirmation. Check the settings folder.",
+    ["获取进行中，请稍后操作。"]="An update is in progress. Try again when it finishes.",
+    ["当前文件："]="Current file: ",
+    ["\n\n候选图书："]="\n\nPossible match: ",
+    ["\n作者／贡献者："]="\nAuthor / contributor: ",
+    ["\n评分："]="\nRating: ",
+    ["/10\n版本信息："]="/10\nEdition: ",
+    ["\n核验差异："]="\nDifferences: ",
+    ["用户检索结果，仍需确认"]="Search result; review required",
+    ["\n来源："]="\nSource: ",
+    ["\n获取时间："]="\nFetched: ",
+    ["\n\n简介："]="\n\nDescription:\n",
+    ["来源没有可提取的简介"]="No description available from this source",
+    ["\n\n认可后按此具体条目显示，不代表全集或其他版本的评分。"]="\n\nConfirming uses this specific edition's information, not the rating for a full collection or other editions.",
+    ["确认图书匹配"]="Confirm Book Match",
+    ["返回"]="Back",
+    ["认可此信息"]="Use This Match",
+    ["已保存用户确认的匹配信息。"]="Your confirmed match has been saved.",
+    ["自行输入书名、作者"]="Enter Title and Author",
+    ["保留已有信息；以后仍可重新获取。"]="Existing information kept. You can search again later.",
+    ["本书暂不显示联网评分和简介；以后仍可重新获取。"]="Online ratings and descriptions are hidden for this book. You can search again later.",
+    ["稍后处理"]="Not Now",
+    ["\n待确认："]="\nNeeds review: ",
+    ["暂无待确认图书"]="No books to review",
+    ["待确认图书"]="Books to Review",
+    ["请在阅读界面选择一本书。"]="Open a book first.",
+    ["已有获取任务，请结束后再检索。"]="Wait for the current update to finish before searching again.",
+    ["重新检索当前图书"]="Find a Match for This Book",
+    ["书名"]="Title",
+    ["提交检索"]="Search",
+    ["请输入一行书名和作者，每项不超过200个汉字。"]="Enter a single-line title and author, up to 200 characters each.",
+    ["请开启插件联网并连接网络后提交。"]="Turn on online updates and connect to a network before searching.",
+    ["已有获取任务，请稍后提交。"]="An update is in progress. Wait for it to finish before searching.",
+    ["检索完成，等待确认。"]="Search complete. Review the results to continue.",
+    ["未匹配成功，保留已有信息。"]="No match found. Existing information kept.",
+    ["未匹配成功，本书暂不显示联网评分和简介。"]="No match found. Online ratings and descriptions are hidden for this book.",
+    ["解除本书的用户确认匹配？后续重新按自动规则核验。"]="Remove the confirmed match for this book? Future updates will use automatic matching.",
+    ["解除"]="Remove Match",
+    ["已解除匹配，请重新更新信息。"]="Match removed. Update information to find a new match.",
+    ["请在需要设置的书籍阅读界面打开此选项。"]="Open this option while reading the book you want to change.",
+    ["搜索书名已保存，请使用“更新信息”重新获取。"]="Search title saved. Choose Update Information to search again.",
+    ["当前书籍的搜索书名"]="Search Title for This Book",
+    ["只影响此书的联网搜索与匹配，不修改文件或小票书名。恢复默认后自动根据内部标题和文件名确认。"]="Only affects online searches and matching for this book. The file and displayed title stay the same. Reset uses the title in the book's metadata and filename.",
+    ["恢复默认"]="Reset",
+    ["小票底部文字（最多20字）"]="Footer Text (up to 20 characters)",
+    ["请输入一行文字，最多20个字符。"]="Enter a single line, up to 20 characters.",
+    ["不设置城市"]="No Location",
+    ["（气象台暂无数据）"]=" (no forecast available)",
+    ["章节（固定）"]="Chapter (always shown)",
+    ["当前页码（固定）"]="Current Page (always shown)",
+    ["全书正文字数乘当前进度，属于折算值。"]="Estimated from the book's total word count and your current progress.",
+    ["此次唤醒后跨书累计实际翻阅的正文，同一位置去重；休眠或重启后重新统计。"]="Text viewed across all books since waking, counted once per position. Sleep or a restart starts a new session.",
+    ["全局"]="All Books · ",
+    ["（旧设置）"]=" (legacy)",
+    ["摘要内容（已选"]="Summary Items (",
+    ["每项是一组数字摘要。选满两项后，请先取消一项，再选择其他内容；今日、本周、本月统计所有图书。"]="Each item is a numeric summary. Select up to two. Deselect one before choosing another. Today, This Week, and This Month include all books.",
+    ["周期摘要：时长＋"]="Summary: Time + ",
+    ["适用于全局今日、本周、本月。累计摘要与旧本书今日固定显示时长和页数。"]="Applies to Today, This Week, and This Month across all books. All-time and legacy This Book Today summaries always show time and pages.",
+    ["阅读图表（已选"]="Reading Charts (",
+    ["显示每天的阅读时长或字数，可独立于数字摘要选择；选满两项后，先取消一项再切换。"]="Shows daily reading time or words, independently of numeric summaries. Select up to two. Deselect one before choosing another.",
+    ["选择书库目录"]="Choose Library Folder",
+    ["请选择可读取的图书文件夹，不能选择系统根目录。"]="Choose a readable book folder. The system root folder isn't supported.",
+    ["此设备无法直接打开网页"]="This device can't open web pages directly",
+    ["更新日志"]="What's New",
+    ["关于 InkFolio"]="About InkFolio",
+    ["上游项目"]="Upstream Project",
+    ["原始补丁"]="Original Patch",
+    ["许可证"]="License",
+    ["使用 InkFolio作为休眠壁纸；关闭后保持屏幕原样。此功能仅在支持休眠壁纸的平台启用。"]="Show InkFolio while the device sleeps. When off, the screen stays as it is. Available only on platforms that support custom sleep screens.",
+    ["勾选与选择立即生效；返回菜单会保留修改。"]="Changes apply immediately and are kept when you go back.",
+    ["天气与日期"]="Weather & Date",
+    ["今日天气"]="Today's Weather",
+    ["明日天气"]="Tomorrow's Weather",
+    ["图书与榜单"]="Book Details & Rankings",
+    ["月榜设置"]="Monthly Rankings Settings",
+    ["榜单分类"]="Category",
+    ["锁屏时轮换"]="Rotate on Sleep",
+    ["关闭时显示所选分类的前3本；开启后，每次锁屏按缓存顺序换下一组，每组最多3本，末组后回到开头。离线可用，预览和截图不换组。评分为最近获取时的数值。"]="When off, shows the first three books in the selected category. When on, each sleep screen shows the next group of up to three cached books, starting over after the last group. Works offline. Previews and screenshots keep the current group. Ratings are from the last successful update.",
+    ["刷新月榜"]="Refresh Monthly Rankings",
+    ["重新获取所选分类的完整月榜和评分。普通图书信息更新不会强制刷新月榜。"]="Fetch the complete monthly list and ratings for the selected category. Regular book updates don't force a refresh of monthly rankings.",
+    ["联网设置 · "]="Online Services · ",
+    ["本待确认"]=" to review",
+    ["阅读界面：重新获取当前书籍并更新一次天气。非阅读界面：扫描整个书库，补全未完整获取的书籍并更新一次天气。今日、明日天气均关闭后不请求天气。"]="While reading: refresh this book and the weather. Elsewhere: scan the library, complete missing book information, and refresh the weather. No weather is fetched when both days are off.",
+    ["待确认图书（"]="Books to Review (",
+    ["选择存放图书的文件夹。更改后重新建立记录，已有图书可通过“更新信息”获取。"]="Choose the folder containing your books. Changing it rebuilds library records. Use Update Information to fetch missing details.",
+    ["InkFolio: KOReader 工具菜单不可用"]="InkFolio: KOReader Tools menu unavailable",
+    ["菜单外点击关闭"]="Dismiss menus with outside tap",
+    ["InkFolio 预览"]="InkFolio Preview",
+    ["保存InkFolio 截图"]="Save InkFolio Screenshot",
+    ["小票"]="Receipt",
+    ["像素"]="Pixel",
+    ["现代"]="Modern",
+    ["封面"]="Cover",
+    ["保存"]="Save",
+    ["可加载"]="Available",
+    ["缺失"]="Missing",
+    ["内部标题"]="Book metadata title",
+    ["请求超时"]="Request timed out",
+    ["解析失败"]="Couldn't parse the response",
+    ["保存失败"]="Couldn't save",
+    ["图书匹配失败"]="Book match failed",
+    ["网络未连接"]="Not connected",
+    ["联网已关闭"]="Online updates are off",
+    ["任务启动或执行失败"]="Couldn't run the update",
+    ["连接或传输错误"]="Connection or transfer error",
+    ["综合"]="All",
+    ["文学"]="Literature",
+    ["小说"]="Fiction",
+    ["历史文化"]="History & Culture",
+    ["社会纪实"]="Society & Nonfiction",
+    ["科学新知"]="Science & Ideas",
+    ["艺术设计"]="Art & Design",
+    ["绘本漫画"]="Comics & Picture Books",
+    ["搜索书名不能为空，请输入一行书名。"]="Enter a search title on a single line.",
+    ["请输入大于0的整数分钟。"]="Enter a whole number of minutes greater than zero.",
+    ["请以万字输入，最多保留一位小数，例如2.5。"]="Enter a whole number of thousands of words greater than zero.",
+    ["匿名函数"]="Anonymous function",
+    ["未启动"]="Not started",
+    ["天"]=" days",
+    ["卷册范围不合法或互相冲突"]="Invalid or conflicting volume ranges",
+    ["卷册范围格式无法解析"]="Couldn't read the volume range",
+    ["卷册编号格式无法解析"]="Couldn't read the volume number",
+    ["卷册编号不合法或互相冲突"]="Invalid or conflicting volume numbers",
+    ["卷册范围所在文件名与全集标题不一致"]="Volume range in the filename doesn't match the collection title",
+    ["用户自定义"]="Custom search",
+    ["明确全集或卷册范围"]="Collection or volume range",
+    ["仅匹配第"]="Match only volumes ",
+    ["册"]="",
+    ["详情页内容无法解析"]="Couldn't read the book details",
+    ["详情页缺少图书身份字段，可能受到访问限制"]="Book identity is missing; access may be restricted",
+    ["语言"]="Language",
+    ["天气显示"]="Weather Display",
+    ["文字"]="Text",
+    ["图标"]="Icons",
+    ["使用统一黑白线条图标替代天气状态文字，温度与日期照常显示；未知状态保留文字。"]="Replace weather conditions with matching monochrome icons. Dates and temperatures stay visible. Unrecognized conditions are shown as text.",
+    ["仅切换 InkFolio 的界面语言，不影响 KOReader、书籍内容或用户输入的文字。"]="Changes the InkFolio interface language. KOReader, book content, and your own text stay as they are.",
+    ["封面皮肤不显示此项；切换皮肤后可继续使用，原设置保留。"]="This item isn't shown in Cover. Your settings are kept for other styles.",
+    ["封面皮肤的天气与日期位于卡片底部，其他皮肤位于顶部。封面可选今日或明日，其他皮肤可同时显示。天气每6小时更新，跨日或切城时重新检查；刷新失败时继续显示同一城市当天的有效缓存。可通过“更新信息”手动刷新；两日均关闭时不获取天气。"]="Weather and dates appear at the bottom of Cover cards and at the top in other styles. Cover shows one forecast; other styles can show both. Weather refreshes every six hours, on a new day, or when you change locations. If a refresh fails, valid forecasts already fetched that day for the same location stay visible. Use Update Information to refresh manually. No weather is fetched when both days are off.",
+    ["点击预览画面全屏显示，再次点击返回；保存后生效。封面卡片支持自动、白色或深灰底色。"]="Tap the preview for full screen; tap again to return. Save to apply your changes. Cover cards support Auto, White, and Dark Gray backgrounds.",
+    ["按设备本地日期统计，跨午夜时长拆分到对应日期。周摘要与目标从周一开始；周图表中文从周一开始，英文从周日开始。月份按自然月划分。日均为本周期已记录时长除以截至今天的自然日数，包含今天；未来日期不参与汇总。"]="Periods use your device's local date. Reading time spanning midnight is split between dates. Weekly summaries and goals start on Monday. Weekly charts start on Sunday in English and Monday in Chinese. Months start on the first. The daily average divides recorded time by elapsed calendar days, including today. Future dates aren't included.",
+    ["InkFolio\nv1.3.0｜2026-10-30\n\n为 KOReader 设计的锁屏插件，以阅读信息卡展示图书封面、豆瓣评分、阅读进度、时长、页数和字数，支持阅读目标、豆瓣月榜、城市天气与截图。\n\n提供小票、像素、现代、封面四种 UI皮肤，支持外观实时预览与调整，以及简体中文／英语切换。\n\n兼容性\n• Kobo Sage、Kindle：已通过实机验证。\n• PocketBook：需先安装 KOReader，休眠显示取决于设备支持，尚未经实机验证。\n• Android 手机及安卓电纸书：使用支持用户补丁的 KOReader 官方安装包，可尝试预览与截图；无法替换系统锁屏，尚未经实机验证。\n• F-Droid 版 KOReader：不支持所需的用户补丁，无法使用。\n\n开发与设计：zacharykim88\n开发辅助：OpenAI Codex\n\n上游致谢\nEstela-Zelin84/KOReader_Book-Receipt\nu/hundredpercentcocoa\nomer-faruq/koreader-user-patches\n\n代码：GPL-3.0｜字体许可见随包说明"]="InkFolio\nv1.3.0 | October 30, 2026\n\nA lock-screen plugin for KOReader. Reading cards show book covers, Douban ratings, reading progress, time, pages, and word counts, with reading goals, Douban monthly rankings, local weather, and screenshots.\n\nChoose Receipt, Pixel, Modern, or Cover, adjust the appearance with live previews, and switch between Simplified Chinese and English.\n\nCompatibility\n• Kobo Sage and Kindle: tested on real devices.\n• PocketBook: requires KOReader; sleep screens depend on device support. Not tested on real devices.\n• Android phones and e-readers: previews and screenshots may work with official KOReader builds that support user patches. Cannot replace the system lock screen. Not tested on real devices.\n• F-Droid builds of KOReader do not support the required user patches.\n\nDesign and development: zacharykim88\nDevelopment assistance: OpenAI Codex\n\nCredits\nEstela-Zelin84/KOReader_Book-Receipt\nu/hundredpercentcocoa\nomer-faruq/koreader-user-patches\n\nCode: GPL-3.0. See the included notices for font licenses.",
+    ["v1.3.0｜2026-10-30\n\n新增\n• 封面皮肤：以图书封面为背景，叠加阅读信息卡，支持卡片底色自动适配。\n• 城市天气：支持今日／明日预报，新增天气状态图标显示。\n• 支持简体中文与英语切换。\n• 外观预览支持点击全屏查看，返回后可继续调整。\n\n调整\n• 统一排版与设置交互，优化联网更新，减少重复请求。\n\n修复\n• 修复阅读目标保存异常、天气缓存显示及部分英文界面问题。\n\nv1.2.0｜2026-10-23\n\n新增\n• 阅读字数按日汇总，新增周／月字数柱状图，更直观地查看阅读量。\n• 日／周／月阅读目标，支持时长或字数，展示完成比例。\n• 小票、像素、现代三种风格，可切换并实时预览。\n• 豆瓣月榜，支持分类选择与离线轮换。\n\n调整\n• 阅读摘要扩展本周、本月统计，趋势图最多同时显示两项。\n• 优化排版、字体层级与设置操作，精简干扰视觉呈现的冗余功能。\n\n升级注意\n已安装用户请覆盖补丁并合并随包字体，保留原设置和阅读数据。\n仅 v1.0.0 用户需先删除旧补丁 2-book-receipt-shortcut-and-lockscreen.lua。\n\n---\n\nv1.1.0｜2026-10-13\n\n新增\n• InkFolio 截图及设置、截图手势入口。\n• 周／月阅读时长柱状图及已读字数统计。\n• 图书匹配确认、重新检索、来源查询、复现记录及脱敏诊断导出。\n\n调整\n• 完善豆瓣匹配、评分均分及获取规则，减少重复联网。\n• 整理设置层级与界面，修复菜单图标、返回、取消和缓存保留问题。\n• 新用户默认黑色背景、关闭进度弹窗，首次显示时自动适配比例；旧用户设置保留。\n\n升级注意\n已安装 v1.0.0 的用户：本次补丁文件更名为 2-inkfolio.lua。升级前请删除旧文件 2-book-receipt-shortcut-and-lockscreen.lua，再安装新补丁。已有设置和字体可继续使用。"]="v1.3.0 | October 30, 2026\n\nAdded\n• Cover style: a reading card over the book cover, with an adaptive card background.\n• Local weather: forecasts for today and tomorrow, with new weather condition icons.\n• Switch between Simplified Chinese and English.\n• Tap the appearance preview to view it full screen, then return to continue adjusting.\n\nChanged\n• Refined layouts and settings, and reduced repeated network requests.\n\nFixed\n• Fixed reading goal save failures, cached weather display, and issues in the English interface.\n\nv1.2.0 | October 23, 2026\n\nAdded\n• Daily word counts and weekly and monthly word charts.\n• Daily, weekly, and monthly reading goals for time or words.\n• Receipt, Pixel, and Modern styles with live previews.\n• Douban monthly rankings with categories and offline rotation.\n\nChanged\n• Weekly and monthly summaries; show up to two charts.\n• Refined layout, typography, and settings.\n\nUpgrading\nReplace the patch and merge the included fonts. Your settings and reading data are kept.\nv1.0.0 users must first remove 2-book-receipt-shortcut-and-lockscreen.lua.\n\nv1.1.0 | October 13, 2026\n\nAdded\n• InkFolio screenshots and gesture actions for settings and screenshots.\n• Weekly and monthly reading time charts and word counts.\n• Match review, custom searches, source information, action records, and redacted diagnostic exports.\n\nChanged\n• More reliable Douban matching, rating averages, and update rules.\n• Refined settings and fixed menu icons, navigation, canceling, and cache retention.\n• New installations start with a black background, no update popup, and automatic initial sizing. Existing settings are kept.\n\nUpgrading from v1.0.0\nRemove 2-book-receipt-shortcut-and-lockscreen.lua before installing 2-inkfolio.lua. Existing settings and fonts can still be used.",
+    ["查找内容"]="Find in Text",
+    ["查找首个"]="Find First",
+    ["查找下一个"]="Find Next",
+    ["区分大小写"]="Match Case",
+    ["未找到匹配内容。"]="No matches found.",
+}
+function Inkfolio.language()
+    local language=G_reader_settings:readSetting('read_receipt_v2_language') or 'zh_CN'
+    assert(language=='zh_CN' or language=='en_US','InkFolio: invalid language setting')
+    return language
+end
+-- Reverse lookup is limited to our own cached labels and status messages.
+local source_text={}
+for zh,en in pairs(EN)do if en~=''and not source_text[en]then source_text[en]=zh end end
+L=function(text)
+    if text==nil then return nil end
+    local source=EN[text] and text or source_text[text] or text
+    return Inkfolio.language()=='en_US' and (EN[source] or text) or source
+end
+Inkfolio.translate=L
+function Inkfolio.localizedLabels(list)
+    for _,item in pairs(list)do
+        local labels={label=item.label,title=type(item.title)=='string' and item.title or nil}
+        item.label=nil
+        if labels.title then item.title=nil end
+        setmetatable(item,{__index=function(_,key)if labels[key]then return L(labels[key])end end})
+    end
+end
+
+-- Four skins share data, content choices and the common preview/export/suspend entry.
+Inkfolio.UI_STYLES={{id='classic',label='小票'},{id='pixel',label='像素'},{id='swiss',label='现代'},{id='cover',label='封面'}}
+-- Information roles and spacing are shared; skins only define their visual identity.
+local UI_TEXT={
+    section={size=24,bold=true},subheading={size=20,bold=true},
+    label={size=20,muted=true},module={size=20},value={size=24,bold=true},
+    header={size=20},text={size=24},percentage={size=30,bold=true},
+    body={size=20},small={size=16,muted=true},
+}
+local UI_LAYOUT={rhythm=4,section=16,heading=8,card_sample_band=16,card_sample_step=4}
 local UI_THEMES={
     classic={id='classic',label='小票',fonts={body='cfont',title='Xiangcui-Dazijiti-main/香萃打字机体 W40.ttf'},
         assets={'Xiangcui-Dazijiti-main/香萃打字机体 W40.ttf'},padding=25,shadow=8,summary_align='center',
-        type={book={size=55,font='title',wear=true},brand={size=36,font='title',wear=true},section={size=24,bold=true},
-            subheading={size=20,bold=true},label={size=20},module={size=20},value={size=24,bold=true},text={size=24},
-            percentage={size=30,bold=true},body={size=20},small={size=16}}},
+        type={book={size=55,font='title',wear=true},brand={size=28,font='title',wear=true}}},
     pixel={id='pixel',label='像素',fonts={body='fusion-pixel-12px-proportional-zh_hans.otf'},
         assets={'fusion-pixel-12px-proportional-zh_hans.otf'},padding=25,summary_align='center',
-        type={book={size=55,bold=true},brand={size=36,bold=true},section={size=24,bold=true},
-            subheading={size=20,bold=true},module={size=20},label={size=20},value={size=24,bold=true},
-            text={size=24},percentage={size=30,bold=true},body={size=20},small={size=16}}},
-    swiss={id='swiss',label='现代',fonts={body='NotoSans-Regular.ttf'},assets={'NotoSans-Regular.ttf'},padding=28,summary_align='left',rhythm=4,
-        type={book={size=44,bold=true},brand={size=32,bold=true},section={size=24,bold=true},subheading={size=20,bold=true},
-            module={size=20},label={size=20},value={size=24,bold=true},text={size=24},percentage={size=32,bold=true},
-            body={size=20},small={size=16}}},
+        type={book={size=55,bold=true},brand={size=28,bold=true}}},
+    swiss={id='swiss',label='现代',fonts={body='NotoSans-Regular.ttf'},assets={'NotoSans-Regular.ttf'},padding=28,summary_align='left',
+        type={book={size=55,bold=true},brand={size=28,bold=true}}},
+    cover={id='cover',label='封面',card_dark=Blitbuffer.COLOR_GRAY_3,fonts={body='NotoSans-Regular.ttf'},assets={'NotoSans-Regular.ttf'},padding=32,summary_align='left',
+        type={book={size=40,bold=true},brand={size=28,bold=true}}},
 }
+for _,theme in pairs(UI_THEMES)do
+    for role,style in pairs(UI_TEXT)do theme.type[role]=style end
+end
 
 local P = 'read_receipt_v2_'
 local S = {
+    language=P..'language',weather_display=P..'weather_display',
+    weather=P..'weather',weather_tomorrow=P..'weather_tomorrow',date=P..'date',weather_city=P..'weather_city',
+    card_width=P..'card_width',card_font=P..'card_font',card_background=P..'card_background',cover_background=P..'cover_background',cover_weather=P..'cover_weather',
     online = P .. 'online', width = P .. 'width', font = P .. 'font',
     cover = P .. 'cover', chapter = P .. 'chapter', stats = P .. 'stats',
     intro = P .. 'intro', score = P .. 'score',
@@ -89,26 +885,456 @@ local DAILY_DONE = store:readSetting('daily_done') == true
 Inkfolio.monthly=store:readSetting('monthly_chart') or {}
 assert(type(Inkfolio.monthly)=='table','InkFolio: 月榜缓存结构损坏')
 local LIBRARY = store:readSetting('library_files') or {pending={}}
-local nextLibraryScan = 0
-local dailyCheck
+local NET=store:readSetting('network_schedule') or {books={},pending={}}
+assert(type(NET)=='table' and type(NET.books)=='table' and type(NET.pending)=='table','InkFolio: 联网计划记录损坏')
+local dailyCheck, weatherCheck, selectedWeatherCity
+local WEATHER=store:readSetting('weather') or {records={}}
+assert(type(WEATHER)=='table' and type(WEATHER.records)=='table','InkFolio: 天气缓存结构损坏')
+-- CMA/NMC station identifiers verified from /rest/province on 2026-10-09.
+-- Mainland prefecture names: Administrative-divisions-of-China (NBS-derived pc.json).
+-- Municipalities and special administrative regions are listed directly.
+local WEATHER_REGIONS={
+    {name="北京市",cities={
+        {name="北京市",code="Wqsps"},
+    }},
+    {name="天津市",cities={
+        {name="天津市",code="yqSjH"},
+    }},
+    {name="河北省",cities={
+        {name="石家庄市",code="uJQqI"},
+        {name="唐山市",code="aCRJR"},
+        {name="秦皇岛市",code="SBrmr"},
+        {name="邯郸市",code="AwDQd"},
+        {name="邢台市",code="WgyJx"},
+        {name="保定市",code="FaykR"},
+        {name="张家口市",code="AXmqR"},
+        {name="承德市",code="oWYwK"},
+        {name="沧州市",code="mHkdW"},
+        {name="廊坊市",code="gXmTp"},
+        {name="衡水市",code="Jiheq"},
+    }},
+    {name="山西省",cities={
+        {name="太原市",code="jmHMK"},
+        {name="大同市",code="VZgct"},
+        {name="阳泉市",code="rwUnO"},
+        {name="长治市",code="dwSMC"},
+        {name="晋城市",code="VKljS"},
+        {name="朔州市",code="OtlfP"},
+        {name="晋中市",code="ovSsu"},
+        {name="运城市",code="AupnI"},
+        {name="忻州市",code="twMEQ"},
+        {name="临汾市",code="nhsiM"},
+        {name="吕梁市",code="EQQRH"},
+    }},
+    {name="内蒙古自治区",cities={
+        {name="呼和浩特市",code="IlyWx"},
+        {name="包头市",code="wzspS"},
+        {name="乌海市",code="HfJln"},
+        {name="赤峰市",code="yiSxk"},
+        {name="通辽市",code="LUAqU"},
+        {name="鄂尔多斯市",code="cSBaZ"},
+        {name="呼伦贝尔市",code="YUznP"},
+        {name="巴彦淖尔市",code="TBQLP"},
+        {name="乌兰察布市",code="MwkIG"},
+        {name="兴安盟",code="wfaiF"},
+        {name="锡林郭勒盟",code="euSxF"},
+        {name="阿拉善盟",code="foHBa"},
+    }},
+    {name="辽宁省",cities={
+        {name="沈阳市",code="xasvS"},
+        {name="大连市",code="nGPyb"},
+        {name="鞍山市",code="TopGN"},
+        {name="抚顺市",code="shhKE"},
+        {name="本溪市",code="fZXDt"},
+        {name="丹东市",code="DlvsN"},
+        {name="锦州市",code="LgDdn"},
+        {name="营口市",code="veIOe"},
+        {name="阜新市",code="uxzEA"},
+        {name="辽阳市",code="kgqfX"},
+        {name="盘锦市",code="ooWvQ"},
+        {name="铁岭市",code="WDQHL"},
+        {name="朝阳市",code="SSCPq"},
+        {name="葫芦岛市",code="NIFaR"},
+    }},
+    {name="吉林省",cities={
+        {name="长春市",code="mxFBj"},
+        {name="吉林市",code="oQKCU"},
+        {name="四平市",code="UIlgs"},
+        {name="辽源市",code="pSYcD"},
+        {name="通化市",code="LaBrf"},
+        {name="白山市",code="nFNOH"},
+        {name="松原市",code="jJpzl"},
+        {name="白城市",code="ktvDN"},
+        {name="延边朝鲜族自治州",code="QHZhm"},
+    }},
+    {name="黑龙江省",cities={
+        {name="哈尔滨市",code="pzXOG"},
+        {name="齐齐哈尔市",code="pMfJu"},
+        {name="鸡西市",code="tsmWc"},
+        {name="鹤岗市",code="pQrYF"},
+        {name="双鸭山市",code="xYzrU"},
+        {name="大庆市",code="uLCaf"},
+        {name="伊春市",code="BAQLD"},
+        {name="佳木斯市",code="IwveF"},
+        {name="七台河市",code="olTln"},
+        {name="牡丹江市",code="WhkSY"},
+        {name="黑河市",code="xggDD"},
+        {name="绥化市",code="ccdEO"},
+        {name="大兴安岭地区",code="HIKCZ"},
+    }},
+    {name="上海市",cities={
+        {name="上海市",code="WwcJd"},
+    }},
+    {name="江苏省",cities={
+        {name="南京市",code="CxOWZ"},
+        {name="无锡市",code="fvlMy"},
+        {name="徐州市",code="bWGZQ"},
+        {name="常州市",code="bmyrb"},
+        {name="苏州市",code="lqYjK"},
+        {name="南通市",code="VHAmf"},
+        {name="连云港市",code="HPnPL"},
+        {name="淮安市",code="wVmjo"},
+        {name="盐城市",code="bUGRK"},
+        {name="扬州市",code="lDhJo"},
+        {name="镇江市",code="xKfDh"},
+        {name="泰州市",code="kQswL"},
+        {name="宿迁市",code="jVxXh"},
+    }},
+    {name="浙江省",cities={
+        {name="杭州市",code="HIieJ"},
+        {name="宁波市",code="XjZpe"},
+        {name="温州市",code="qgMmM"},
+        {name="嘉兴市",code="pxfeS"},
+        {name="湖州市",code="quMLV"},
+        {name="绍兴市",code="gxbHp"},
+        {name="金华市",code="QMNma"},
+        {name="衢州市",code="ydEbu"},
+        {name="舟山市",code="KElec"},
+        {name="台州市",code="zWIte"},
+        {name="丽水市",code="nEoHv"},
+    }},
+    {name="安徽省",cities={
+        {name="合肥市",code="xqcji"},
+        {name="芜湖市",code="YCdBx"},
+        {name="蚌埠市",code="xEdTH"},
+        {name="淮南市",code="DUBio"},
+        {name="马鞍山市",code="cdzPY"},
+        {name="淮北市",code="npJUD"},
+        {name="铜陵市",code="VAMvd"},
+        {name="安庆市",code="bIpli"},
+        {name="黄山市",code="dFIpc"},
+        {name="滁州市",code="aqZIQ"},
+        {name="阜阳市",code="JcXXt"},
+        {name="宿州市",code="KZzYj"},
+        {name="六安市",code="RLVWB"},
+        {name="亳州市",code="bjqNC"},
+        {name="池州市",code="XbuHL"},
+        {name="宣城市",code="hhgTF"},
+    }},
+    {name="福建省",cities={
+        {name="福州市",code="djeOy"},
+        {name="厦门市",code="gDCDS"},
+        {name="莆田市",code="XbBQN"},
+        {name="三明市",code="CZiRH"},
+        {name="泉州市",code="MGECZ"},
+        {name="漳州市",code="SCyJf"},
+        {name="南平市",code="CGyTI"},
+        {name="龙岩市",code="AVWuS"},
+        {name="宁德市",code="uKfig"},
+    }},
+    {name="江西省",cities={
+        {name="南昌市",code="JmxCz"},
+        {name="景德镇市",code="DriXU"},
+        {name="萍乡市",code="yBDJf"},
+        {name="九江市",code="kVOgS"},
+        {name="新余市",code="IzuqH"},
+        {name="鹰潭市",code="UWvkt"},
+        {name="赣州市",code="uBtqa"},
+        {name="吉安市",code="riQqz"},
+        {name="宜春市",code="OqvoJ"},
+        {name="抚州市",code="toCHD"},
+        {name="上饶市",code="KpYAB"},
+    }},
+    {name="山东省",cities={
+        {name="济南市",code="VITKz"},
+        {name="青岛市",code="Jrsbf"},
+        {name="淄博市",code="BGfNv"},
+        {name="枣庄市",code="rXLkZ"},
+        {name="东营市",code="CHtLx"},
+        {name="烟台市",code="qRqdU"},
+        {name="潍坊市",code="hQrpa"},
+        {name="济宁市",code="Jmcsg"},
+        {name="泰安市",code="zUeIF"},
+        {name="威海市",code="KeEOQ"},
+        {name="日照市",code="GoJQw"},
+        {name="临沂市",code="aGpFP"},
+        {name="德州市",code="polCM"},
+        {name="聊城市",code="XXeBL"},
+        {name="滨州市",code="penbZ"},
+        {name="菏泽市",code="MGAnB"},
+    }},
+    {name="河南省",cities={
+        {name="郑州市",code="YVItN"},
+        {name="开封市",code="swtij"},
+        {name="洛阳市",code="rYaxY"},
+        {name="平顶山市",code="nRecJ"},
+        {name="安阳市",code="hNkdK"},
+        {name="鹤壁市",code="NYclC"},
+        {name="新乡市",code="VLpOH"},
+        {name="焦作市",code="ubXHV"},
+        {name="濮阳市",code="XbbBI"},
+        {name="许昌市",code="ZzMTA"},
+        {name="漯河市",code="lncFZ"},
+        {name="三门峡市",code="TjcXC"},
+        {name="南阳市",code="vRweN"},
+        {name="商丘市",code="aMsMR"},
+        {name="信阳市",code="hdKHW"},
+        {name="周口市",code="URskB"},
+        {name="驻马店市",code="ZmGSj"},
+    }},
+    {name="湖北省",cities={
+        {name="武汉市",code="bSpCz"},
+        {name="黄石市",code="MTZwr"},
+        {name="十堰市",code="BREJr"},
+        {name="宜昌市",code="ekVpr"},
+        {name="襄阳市",code="fTXja"},
+        {name="鄂州市",code="Agzls"},
+        {name="荆门市",code="vGwSN"},
+        {name="孝感市",code="CQLZw"},
+        {name="荆州市",code="xBZlA"},
+        {name="黄冈市",code="sWCpi"},
+        {name="咸宁市",code="BokVQ"},
+        {name="随州市",code="VHSxv"},
+        {name="恩施土家族苗族自治州",code="zKHUp"},
+    }},
+    {name="湖南省",cities={
+        {name="长沙市",code="zOenJ"},
+        {name="株洲市",code="siHjW"},
+        {name="湘潭市",code="tWpqg"},
+        {name="衡阳市",code="ObykY"},
+        {name="邵阳市",code="KZYji"},
+        {name="岳阳市",code="bwVav"},
+        {name="常德市",code="NMRKc"},
+        {name="张家界市",code="FOUZo"},
+        {name="益阳市",code="OZhHG"},
+        {name="郴州市",code="cYyyF"},
+        {name="永州市",code="vXgNI"},
+        {name="怀化市",code="pJrqw"},
+        {name="娄底市",code="ZrEsO"},
+        {name="湘西土家族苗族自治州",code="TaxlO"},
+    }},
+    {name="广东省",cities={
+        {name="广州市",code="DwzZf"},
+        {name="韶关市",code="fXufo"},
+        {name="深圳市",code="AhpEU"},
+        {name="珠海市",code="sdnjf"},
+        {name="汕头市",code="KYhpn"},
+        {name="佛山市",code="YOyIv"},
+        {name="江门市",code="YtTxj"},
+        {name="湛江市",code="OKhmr"},
+        {name="茂名市",code="aELXI"},
+        {name="肇庆市",code="SwPNZ"},
+        {name="惠州市",code="VDZzQ"},
+        {name="梅州市",code="lWavY"},
+        {name="汕尾市",code="hlwPp"},
+        {name="河源市",code="Fkjlf"},
+        {name="阳江市",code="dCezB"},
+        {name="清远市",code="WYryQ"},
+        {name="东莞市",code="cqsJg"},
+        {name="中山市",code="YIWau"},
+        {name="潮州市",code="CSTxF"},
+        {name="揭阳市",code="rUWdQ"},
+        {name="云浮市",code="JMZwt"},
+    }},
+    {name="广西壮族自治区",cities={
+        {name="南宁市",code="dvHfb"},
+        {name="柳州市",code="hDSje"},
+        {name="桂林市",code="qiegc"},
+        {name="梧州市",code="EUqSO"},
+        {name="北海市",code="lBdeM"},
+        {name="防城港市",code="kXkLV"},
+        {name="钦州市",code="jPyoz"},
+        {name="贵港市",code="UzLca"},
+        {name="玉林市",code="cFeHF"},
+        {name="百色市",code="Cejmy"},
+        {name="贺州市",code="SdWDF"},
+        {name="河池市",code="GGGqW"},
+        {name="来宾市",code="qxttW"},
+        {name="崇左市",code="Pnyfc"},
+    }},
+    {name="海南省",cities={
+        {name="海口市",code="vmEKa"},
+        {name="三亚市",code="PtnWb"},
+        {name="三沙市",code="iIkAm"},
+        {name="儋州市",code="pFFlS"},
+    }},
+    {name="重庆市",cities={
+        {name="重庆市",code="UkfaS"},
+    }},
+    {name="四川省",cities={
+        {name="成都市",code="yGYHR"},
+        {name="自贡市",code="MIIAp"},
+        {name="攀枝花市",code="jrDgO"},
+        {name="泸州市",code="nLWnl"},
+        {name="德阳市",code="QFQLG"},
+        {name="绵阳市",code="GcFwG"},
+        {name="广元市",code="OwVIj"},
+        {name="遂宁市",code="pcHfo"},
+        {name="内江市",code="wNtyv"},
+        {name="乐山市",code="YuAXe"},
+        {name="南充市",code="vihpz"},
+        {name="眉山市",code="zkdYW"},
+        {name="宜宾市",code="wfNOD"},
+        {name="广安市",code="zJhEo"},
+        {name="达州市",code="uEFLb"},
+        {name="雅安市",code="MfnxC"},
+        {name="巴中市",code="UxUlc"},
+        {name="资阳市",code="AVVPj"},
+        {name="阿坝藏族羌族自治州",code="ujnor"},
+        {name="甘孜藏族自治州",code="EvJZp"},
+        {name="凉山彝族自治州",code="kSbRT"},
+    }},
+    {name="贵州省",cities={
+        {name="贵阳市",code="SKMHP"},
+        {name="六盘水市",code="neXJx"},
+        {name="遵义市",code="mKDbo"},
+        {name="安顺市",code="zYxtY"},
+        {name="毕节市",code="QJFow"},
+        {name="铜仁市",code="EaOOy"},
+        {name="黔西南布依族苗族自治州",code="pYfUO"},
+        {name="黔东南苗族侗族自治州",code="NwqhO"},
+        {name="黔南布依族苗族自治州",code="ikFVR"},
+    }},
+    {name="云南省",cities={
+        {name="昆明市",code="IayMy"},
+        {name="曲靖市",code="rYbQI"},
+        {name="玉溪市",code="eHman"},
+        {name="保山市",code="DQgGy"},
+        {name="昭通市",code="CMqgr"},
+        {name="丽江市",code="AwEIF"},
+        {name="普洱市",code="weSDX"},
+        {name="临沧市",code="oiQQr"},
+        {name="楚雄彝族自治州",code="xbekN"},
+        {name="红河哈尼族彝族自治州",code="kLDAL"},
+        {name="文山壮族苗族自治州",code="ZQEia"},
+        {name="西双版纳傣族自治州",code="IhAco"},
+        {name="大理白族自治州",code="MXvqt"},
+        {name="德宏傣族景颇族自治州",code="YpfMn"},
+        {name="怒江傈僳族自治州",code="MlVrp"},
+        {name="迪庆藏族自治州",code="dghSe"},
+    }},
+    {name="西藏自治区",cities={
+        {name="拉萨市",code="utJQK"},
+        {name="日喀则市",code="wcnpZ"},
+        {name="昌都市",code="FKHOa"},
+        {name="林芝市",code="ulvCs"},
+        {name="山南市",code="uuiXc"},
+        {name="那曲市",code="aDeyn"},
+        {name="阿里地区",code="DDraR"},
+    }},
+    {name="陕西省",cities={
+        {name="西安市",code="RfjCI"},
+        {name="铜川市",code="lZvra"},
+        {name="宝鸡市",code="jrjXm"},
+        {name="咸阳市",code="FXoMd"},
+        {name="渭南市",code="fXkRh"},
+        {name="延安市",code="gtpZu"},
+        {name="汉中市",code="cASRq"},
+        {name="榆林市",code="eEPbq"},
+        {name="安康市",code="RprEI"},
+        {name="商洛市",code="qbDbK"},
+    }},
+    {name="甘肃省",cities={
+        {name="兰州市",code="ARkZA"},
+        {name="嘉峪关市",code="WVCbx"},
+        {name="金昌市",code="chtaw"},
+        {name="白银市",code="soZAZ"},
+        {name="天水市",code="tiBhu"},
+        {name="武威市",code="LAPGD"},
+        {name="张掖市",code="nvQbo"},
+        {name="平凉市",code="Yekjp"},
+        {name="酒泉市",code="vDJSl"},
+        {name="庆阳市",code="Nvedf"},
+        {name="定西市",code="rsMQP"},
+        {name="陇南市",code="mdYJa"},
+        {name="临夏回族自治州",code="orIIe"},
+        {name="甘南藏族自治州",code="QyZJe"},
+    }},
+    {name="青海省",cities={
+        {name="西宁市",code="SHRvr"},
+        {name="海东市",code="CrGat"},
+        {name="海北藏族自治州",code="biGag"},
+        {name="黄南藏族自治州",code="pVcUC"},
+        {name="海南藏族自治州",code="bwKfK"},
+        {name="果洛藏族自治州",code="ycCXH"},
+        {name="玉树藏族自治州",code="MDlNL"},
+        {name="海西蒙古族藏族自治州",code="UpIIn"},
+    }},
+    {name="宁夏回族自治区",cities={
+        {name="银川市",code="LqTRN"},
+        {name="石嘴山市",code="jNMZg"},
+        {name="吴忠市",code="VXPXK"},
+        {name="固原市",code="muLnq"},
+        {name="中卫市",code="mZrCd"},
+    }},
+    {name="新疆维吾尔自治区",cities={
+        {name="乌鲁木齐市",code="lIPam"},
+        {name="克拉玛依市",code="RHxwy"},
+        {name="吐鲁番市",code="DGEdf"},
+        {name="哈密市",code="LFhJu"},
+        {name="昌吉回族自治州",code="bIfiH"},
+        {name="博尔塔拉蒙古自治州",code="UnvYB"},
+        {name="巴音郭楞蒙古自治州",code="QAgHw"},
+        {name="阿克苏地区",code="wPpQt"},
+        {name="克孜勒苏柯尔克孜自治州",code="QCRTj"},
+        {name="喀什地区",code="aHjQA"},
+        {name="和田地区",code="HDzeq"},
+        {name="伊犁哈萨克自治州",code="kAFDB"},
+        {name="塔城地区",code="qHPXG"},
+        {name="阿勒泰地区",code="SnOYy"},
+    }},
+    {name="香港特别行政区",cities={
+        {name="香港特别行政区",code="KnxKc"},
+    }},
+    {name="澳门特别行政区",cities={
+        {name="澳门特别行政区",code="ZZhCJ"},
+    }},
+    {name="台湾省",cities={
+        {name="台北市",code="VrMVF"},
+        {name="新北市",code=""},
+        {name="桃园市",code=""},
+        {name="台中市",code="FYDSf"},
+        {name="台南市",code=""},
+        {name="高雄市",code="Urwjw"},
+        {name="基隆市",code=""},
+        {name="新竹市",code=""},
+        {name="嘉义市",code=""},
+    }},
+}
+
 
 local STATS_PATH = DataStorage:getSettingsDir() .. '/statistics.sqlite3'
-local MAX_AUTO = 3
+local MAX_BOOK_ATTEMPTS = 3
 local RUN = { active = false, sleeping = false, token = 0, manual = false,
               queue = {}, index = 1, started = false, processed = 0,
               worker = nil, transport_broken = false, network_failures = 0, last_error = nil,
               failed = 0, last_book_error = nil }
 -- Cancellation lasts only until the next resume; discard the old daily hold.
 RUN.cancelled_wake = false
+RUN.auto_holds={}
+RUN.scan_pending=true
 store:delSetting('cancelled_day')
 local refreshQuicklook = nil
 function Inkfolio.uiStyle(appearance)
     local id=appearance and appearance.ui_style or G_reader_settings:readSetting(S.ui_style) or 'classic'
-    return assert(UI_THEMES[id],'InkFolio UI风格设置无效：'..tostring(id))
+    return assert(UI_THEMES[id],L('InkFolio UI风格设置无效：')..tostring(id))
+end
+function Inkfolio.isCardStyle(appearance)
+    return Inkfolio.uiStyle(appearance).id=='cover'
 end
 function Inkfolio.uiFontError(theme,size)
     for _,name in ipairs(theme.assets)do
-        if not Font:getFace(name,size or 20) then return '“'..theme.label..'”字体无法加载：\n'..name..'\n请安装随包 fonts 中的字体，再完全重启 KOReader。' end
+        if not Font:getFace(name,size or 20) then return Inkfolio.language()=='en_US'and ("Couldn't load the font for "..theme.label..':\n'..name..'\nInstall the fonts included with InkFolio, then restart KOReader.')or ('“'..theme.label..'”字体无法加载：\n'..name..'\n请安装随包 fonts 中的字体，再完全重启 KOReader。') end
     end
 end
 function Inkfolio.persistSettings(changes)
@@ -118,10 +1344,10 @@ function Inkfolio.persistSettings(changes)
         for key,value in pairs(changes)do G_reader_settings:saveSetting(key,value) end
         G_reader_settings:flush()
         -- Native flush can discard an I/O error; verify our scalar choices on disk.
-        local saved=dofile(assert(G_reader_settings.file,'InkFolio 设置文件路径缺失'))
-        assert(type(saved)=='table','InkFolio 设置保存结果无效')
+        local saved=dofile(assert(G_reader_settings.file,L('InkFolio 设置文件路径缺失')))
+        assert(type(saved)=='table',L('InkFolio 设置保存结果无效'))
         for key,value in pairs(changes)do
-            assert(saved[key]==value,'InkFolio 设置未能保存：'..key)
+            assert(saved[key]==value,L('InkFolio 设置未能保存：')..key)
         end
     end)
     if not ok then
@@ -133,13 +1359,16 @@ function Inkfolio.persistSettings(changes)
     end
 end
 function Inkfolio.selectUIStyle(id)
-    local theme=assert(UI_THEMES[id],'InkFolio UI风格无效：'..tostring(id))
+    local theme=assert(UI_THEMES[id],L('InkFolio UI风格无效：')..tostring(id))
     local reason=Inkfolio.uiFontError(theme)
     if reason then return false,reason end
     if G_reader_settings:readSetting(S.ui_style)==id then return true end
+    local today,tomorrow=Inkfolio.weatherSelected(0),Inkfolio.weatherSelected(1)
     Inkfolio.persistSettings({[S.ui_style]=id})
     Inkfolio.recordAction('UI风格')
-    if refreshQuicklook then refreshQuicklook() end
+    if today~=Inkfolio.weatherSelected(0)or tomorrow~=Inkfolio.weatherSelected(1)then
+        Inkfolio.weatherChanged(Inkfolio.weatherEnabled())
+    elseif refreshQuicklook then refreshQuicklook()end
     return true
 end
 local MANUAL_CONNECT_PENDING = false
@@ -161,8 +1390,6 @@ local function resetDay()
     local d = localDate()
     if DAY ~= d then
         DAY, ROUNDS, DAILY_DONE = d, 0, false
-        RUN.transport_broken = false
-        RUN.network_failures = 0
         saveData()
     end
 end
@@ -235,29 +1462,29 @@ local function cached(book)
     return rating and rating > 0 and rating <= 10 and validURL(item.url) and item or nil
 end
 local SEARCH_TITLES=store:readSetting('search_titles') or {}
-assert(type(SEARCH_TITLES)=='table','InkFolio: 搜索书名设置损坏')
+assert(type(SEARCH_TITLES)=='table',L('InkFolio: 搜索书名设置损坏'))
 for key,value in pairs(SEARCH_TITLES) do
     assert(type(key)=='string' and type(value)=='string' and util.trim(value)~='' and not value:find('[\r\n]'),
-        'InkFolio: 搜索书名设置条目损坏')
+        L('InkFolio: 搜索书名设置条目损坏'))
 end
 function Inkfolio.searchOverride(book) return SEARCH_TITLES[Inkfolio.metadataKey(book)] end
 -- Persisted choices belong to the file, not every file sharing its title.
 Inkfolio.matchState=store:readSetting('book_matching') or {choices={},pending={}}
 Inkfolio.matchState.holds=Inkfolio.matchState.holds or {}
-assert(type(Inkfolio.matchState.holds)=='table','InkFolio: 暂停记录损坏')
+assert(type(Inkfolio.matchState.holds)=='table',L('InkFolio: 暂停记录损坏'))
 assert(type(Inkfolio.matchState)=='table' and type(Inkfolio.matchState.choices)=='table'
-    and type(Inkfolio.matchState.pending)=='table','InkFolio: 图书匹配设置损坏')
+    and type(Inkfolio.matchState.pending)=='table',L('InkFolio: 图书匹配设置损坏'))
 for key,choice in pairs(Inkfolio.matchState.choices)do
     assert(type(key)=='string' and type(choice)=='table' and validURL(choice.url)
-        and type(choice.title)=='string' and type(choice.authors)=='string','InkFolio: 图书确认记录损坏')
+        and type(choice.title)=='string' and type(choice.authors)=='string',L('InkFolio: 图书确认记录损坏'))
 end
 for key,pending in pairs(Inkfolio.matchState.pending)do
     assert(type(key)=='string' and type(pending)=='table' and type(pending.book)=='table'
-        and type(pending.candidates)=='table','InkFolio: 待确认记录损坏')
-    assert(type(pending.book.title)=='string' and type(pending.book.authors)=='string','InkFolio: 待确认图书身份损坏')
+        and type(pending.candidates)=='table',L('InkFolio: 待确认记录损坏'))
+    assert(type(pending.book.title)=='string' and type(pending.book.authors)=='string',L('InkFolio: 待确认图书身份损坏'))
     for _,c in ipairs(pending.candidates)do
         assert(type(c)=='table' and validURL(c.url) and type(c.rating)=='number' and c.rating>0 and c.rating<=10
-            and type(c.title)=='string' and type(c.authors)=='string','InkFolio: 待确认候选损坏')
+            and type(c.title)=='string' and type(c.authors)=='string',L('InkFolio: 待确认候选损坏'))
     end
 end
 function Inkfolio.fileMatchKey(book) return book.path or Inkfolio.metadataKey(book) end
@@ -268,7 +1495,7 @@ end
 function Inkfolio.writeMatchState(next_state)
     local previous=Inkfolio.matchState
     local ok=pcall(function()store:saveSetting('book_matching',next_state);store:flush()end)
-    if not ok then store:saveSetting('book_matching',previous);return false,'匹配记录保存失败，请检查设置目录。' end
+    if not ok then store:saveSetting('book_matching',previous);return false,L('匹配记录保存失败，请检查设置目录。') end
     Inkfolio.matchState=next_state;return true
 end
 function Inkfolio.setPending(book,candidates,reason,query)
@@ -292,7 +1519,7 @@ function Inkfolio.cacheMatches(book,record)
     return record.search_query==Inkfolio.searchTitle(book)
 end
 function Inkfolio.setSearchTitle(book,text)
-    if RUN.active or RUN.worker or MANUAL_CONNECT_PENDING then return false,'获取进行中，请结束后再修改搜索书名。' end
+    if RUN.active or RUN.worker or MANUAL_CONNECT_PENDING then return false,L('获取进行中，请结束后再修改搜索书名。') end
     if text~=nil then
         text=util.trim(tostring(text))
         if text=='' or text:find('[\r\n]') then return false,'搜索书名不能为空，请输入一行书名。' end
@@ -305,13 +1532,13 @@ function Inkfolio.setSearchTitle(book,text)
     if not ok then
         store:saveSetting('search_titles',previous)
         logger.warn('InkFolio search title save failed',reason)
-        return false,'搜索书名保存失败，请检查设置目录是否可写。'
+        return false,L('搜索书名保存失败，请检查设置目录是否可写。')
     end
     SEARCH_TITLES=next_titles
     return true
 end
 for key,value in pairs(Inkfolio.matchState.holds)do
-    assert(type(key)=='string' and type(value)=='string','InkFolio: 暂停记录损坏')
+    assert(type(key)=='string' and type(value)=='string',L('InkFolio: 暂停记录损坏'))
 end
 local function completed(book)
     local item = cached(book)
@@ -331,40 +1558,102 @@ function Inkfolio.needsFetch(book)
     return true
 end
 
+-- Automatic work is scheduled only at its actual deadline, never by a heartbeat.
+Inkfolio.NET_RULES={weather_age=6*3600,book_retry=30*60,book_attempts=MAX_BOOK_ATTEMPTS}
+function Inkfolio.saveNetwork()
+    store:saveSetting('network_schedule',NET);store:flush()
+end
+function Inkfolio.nextDay(now)
+    local d=os.date('*t',now or os.time())
+    return os.time{year=d.year,month=d.month,day=d.day+1,hour=0,min=0,sec=0}
+end
+function Inkfolio.networkHeld(kind)
+    return RUN.auto_holds[kind]==true
+end
+function Inkfolio.resetNetworkPause()
+    RUN.transport_broken=false;RUN.network_failures=0
+end
+function Inkfolio.bookDeadline(book,now)
+    if not Inkfolio.needsFetch(book) then return nil end
+    now=now or os.time()
+    local entry=NET.books[bookKey(book)]
+    if not entry or entry.day~=os.date('%Y-%m-%d',now) then return now end
+    if entry.attempts>=Inkfolio.NET_RULES.book_attempts then return Inkfolio.nextDay(now) end
+    return math.max(now,entry.next_at or now)
+end
+function Inkfolio.queueBook(book,defer)
+    if not book or book.title=='' then return false end
+    local key=bookKey(book)
+    if not Inkfolio.needsFetch(book) then
+        if NET.pending[key]then NET.pending[key]=nil;if not defer then Inkfolio.saveNetwork()end end
+        return false
+    end
+    if book.path then
+        for other,queued in pairs(NET.pending)do
+            if other~=key and queued.path==book.path then NET.pending[other]=nil end
+        end
+    end
+    local copy={}
+    for _,field in ipairs({'title','authors','publisher','isbn','description','path'})do copy[field]=book[field] end
+    NET.pending[key]=copy
+    if not defer then Inkfolio.saveNetwork() end
+    return true
+end
+function Inkfolio.bookAttempt(book,manual)
+    if manual then return end
+    local now=os.time();local day=os.date('%Y-%m-%d',now);local key=bookKey(book)
+    local entry=NET.books[key]
+    if not entry or entry.day~=day then entry={day=day,attempts=0};NET.books[key]=entry end
+    entry.attempts=entry.attempts+1;entry.next_at=now+Inkfolio.NET_RULES.book_retry
+    Inkfolio.saveNetwork()
+end
+function Inkfolio.bookFinished(book)
+    local key=bookKey(book)
+    if not Inkfolio.needsFetch(book) then NET.pending[key]=nil
+    else
+        Inkfolio.queueBook(book,true)
+        local now=os.time();local day=os.date('%Y-%m-%d',now);local entry=NET.books[key]
+        if not entry or entry.day~=day then entry={day=day,attempts=0};NET.books[key]=entry end
+        entry.next_at=now+Inkfolio.NET_RULES.book_retry
+    end
+    Inkfolio.saveNetwork()
+end
+function Inkfolio.networkFailure(book_request,reason)
+    if book_request then RUN.last_error=reason end
+    RUN.network_failures=RUN.network_failures+1
+    if RUN.network_failures>=3 then RUN.transport_broken=true end
+end
+
 local STATUS=store:readSetting('information_status') or {version=1,books={},history={}}
 assert(type(STATUS)=='table' and STATUS.version==1 and type(STATUS.books)=='table'
-    and type(STATUS.history)=='table','InkFolio: 信息状态记录损坏')
--- Retain the empty v1 schema slot for older patch readers, with no retired data.
-local retired_data=store:readSetting('weather')~=nil or G_reader_settings:readSetting(P..'weather_city')~=nil
-    or type(STATUS.weather)~='table' or next(STATUS.weather)~=nil
-STATUS.weather={}
-store:delSetting('weather');G_reader_settings:delSetting(P..'weather_city')
-for i=#STATUS.history,1,-1 do
-    if type(STATUS.history[i])=='table' and STATUS.history[i].kind=='weather' then table.remove(STATUS.history,i);retired_data=true end
-end
+    and type(STATUS.history)=='table',L('InkFolio: 信息状态记录损坏'))
+STATUS.weather=STATUS.weather or {}
+assert(type(STATUS.weather)=='table',L('InkFolio: 天气状态记录损坏'))
 STATUS.write_error=nil;STATUS.log_error=nil
 local RESULTS={pending='待用户确认',success='成功',partial='部分成功',failed='失败',cancelled='已取消',interrupted='已中断',cached='缓存复用'}
 local function validEntry(entry,final)
-    assert(type(entry)=='table' and (RESULTS[entry.result] or not final and entry.result=='running'),'InkFolio: 信息状态条目损坏')
-    assert(entry.reason==nil or type(entry.reason)=='string','InkFolio: 信息状态原因损坏')
+    assert(type(entry)=='table' and (L(RESULTS[entry.result]) or not final and entry.result=='running'),L('InkFolio: 信息状态条目损坏'))
+    assert(entry.reason==nil or type(entry.reason)=='string',L('InkFolio: 信息状态原因损坏'))
     for _,field in ipairs({'attempt_at','finished_at'}) do
         local value=entry[field]
-        assert(value==nil or type(value)=='number' and value>=0 and value<math.huge,'InkFolio: 信息状态时间损坏')
+        assert(value==nil or type(value)=='number' and value>=0 and value<math.huge,L('InkFolio: 信息状态时间损坏'))
     end
 end
-for key,entry in pairs(STATUS.books) do assert(type(key)=='string','InkFolio: 信息状态标识损坏');validEntry(entry,false) end
-assert(#STATUS.history<=20,'InkFolio: 信息状态历史超过限制')
+for _,records in ipairs({STATUS.books,STATUS.weather})do
+    for key,entry in pairs(records)do assert(type(key)=='string',L('InkFolio: 信息状态标识损坏'));validEntry(entry,false) end
+end
+assert(#STATUS.history<=20,L('InkFolio: 信息状态历史超过限制'))
 for _,entry in ipairs(STATUS.history) do
     validEntry(entry,true)
-    assert(entry.kind=='books' or entry.kind=='batch','InkFolio: 信息状态历史类型损坏')
+    assert(entry.kind=='books' or entry.kind=='weather' or entry.kind=='batch',L('InkFolio: 信息状态历史类型损坏'))
 end
 local function infoTime(value)
-    if type(value)~='number' or value<=0 or value>=math.huge then return '未记录' end
+    if type(value)~='number' or value<=0 or value>=math.huge then return L('未记录') end
     return os.date('%Y-%m-%d %H:%M:%S',value)
 end
 local function errorCategory(reason)
-    if not reason or reason=='' then return '无' end
-    reason=tostring(reason)
+    if not reason or reason=='' then return L('无') end
+    reason=source_text[tostring(reason)] or tostring(reason)
     local http=reason:match('HTTP:%s*(%d%d%d)')
     if http then return 'HTTP '..http end
     if reason:find('timed out',1,true) or reason:find('timeout',1,true) then return '请求超时' end
@@ -375,12 +1664,12 @@ local function errorCategory(reason)
     if reason:find('联网已关闭',1,true) then return '联网已关闭' end
     if reason:find('subprocess',1,true) or reason:find('未启动',1,true) then return '任务启动或执行失败' end
     if reason:find('ERROR:',1,true) then return '连接或传输错误' end
-    return '其他错误（原文仅本机可见）'
+    return L('其他错误（原文仅本机可见）')
 end
 local function saveStatus()
     STATUS.write_error=nil
     local ok,reason=pcall(function()store:saveSetting('information_status',STATUS);store:flush()end)
-    if not ok then STATUS.write_error='信息状态保存失败';logger.warn('InkFolio status save failed',reason)
+    if not ok then STATUS.write_error=L('信息状态保存失败');logger.warn('InkFolio status save failed',reason)
     else STATUS.write_error=nil end
     return ok
 end
@@ -388,24 +1677,24 @@ function Inkfolio.debugEvent(stage,result,reason)
     if G_reader_settings:readSetting(S.debug_log)~=true then return end
     local dir=DataStorage:getSettingsDir()..'/inkfolio-diagnostics'
     local ok,err=pcall(function()
-        assert(util.makePath(dir)~=false,'诊断目录无法创建')
+        assert(util.makePath(dir)~=false,L('诊断目录无法创建'))
         local path=dir..'/events.log'
         local size=lfs.attributes(path,'size') or 0
         if size>=262144 then
-            os.remove(path..'.1');assert(os.rename(path,path..'.1'),'日志轮换失败')
+            os.remove(path..'.1');assert(os.rename(path,path..'.1'),L('日志轮换失败'))
         end
         local file=assert(io.open(path,'ab'))
         local wrote,why=file:write(infoTime(os.time()),' | ',stage,' | ',result or '', ' | ',errorCategory(reason),'\n')
-        local closed=file:close();assert(wrote and closed,why or '日志写入失败')
+        local closed=file:close();assert(wrote and closed,why or L('日志写入失败'))
     end)
-    if not ok then STATUS.log_error='详细日志写入失败';logger.warn('InkFolio diagnostic log failed',err)
+    if not ok then STATUS.log_error=L('详细日志写入失败');logger.warn('InkFolio diagnostic log failed',err)
     else STATUS.log_error=nil end
 end
 function Inkfolio.infoAttempt(kind,key)
     local entry={attempt_at=os.time(),result='running'}
     STATUS[kind][key]=entry
     RUN.info_task={kind=kind,key=key}
-    saveStatus();Inkfolio.debugEvent('图书任务','开始')
+    saveStatus();Inkfolio.debugEvent(kind=='weather' and L('天气任务') or L('图书任务'),L('开始'))
 end
 function Inkfolio.infoResult(kind,key,result,reason)
     local entry=STATUS[kind][key] or {}
@@ -415,12 +1704,12 @@ function Inkfolio.infoResult(kind,key,result,reason)
         finished_at=entry.finished_at,reason=reason,category=errorCategory(reason)}
     while #STATUS.history>20 do table.remove(STATUS.history,1) end
     if RUN.info_task and RUN.info_task.kind==kind and RUN.info_task.key==key then RUN.info_task=nil end
-    saveStatus();Inkfolio.debugEvent('图书任务',RESULTS[result] or result,reason)
+    saveStatus();Inkfolio.debugEvent(kind=='weather' and L('天气任务') or L('图书任务'),L(RESULTS[result]) or result,reason)
 end
 function Inkfolio.infoCancelled(reason)
     STATUS.history[#STATUS.history+1]={kind='batch',result='cancelled',finished_at=os.time()}
     while #STATUS.history>20 do table.remove(STATUS.history,1) end
-    saveStatus();Inkfolio.debugEvent('批次任务','已取消')
+    saveStatus();Inkfolio.debugEvent(L('批次任务'),L('已取消'))
 end
 function Inkfolio.infoStatus()return STATUS end
 local function countRecords(records,predicate)
@@ -433,19 +1722,9 @@ end
 Inkfolio.diagnostics=store:readSetting('diagnostics_v2') or {events={},errors={}}
 assert(type(Inkfolio.diagnostics)=='table' and type(Inkfolio.diagnostics.events)=='table'
     and type(Inkfolio.diagnostics.errors)=='table','InkFolio: 诊断记录损坏')
-for _,records in ipairs({Inkfolio.diagnostics.events,Inkfolio.diagnostics.errors})do
-    for i=#records,1,-1 do
-        local stage=type(records[i])=='table' and records[i].stage
-        if type(stage)=='string' and stage:find('天气',1,true) then table.remove(records,i);retired_data=true end
-    end
-end
-if retired_data then
-    store:saveSetting('information_status',STATUS);store:saveSetting('diagnostics_v2',Inkfolio.diagnostics)
-    store:flush();G_reader_settings:flush()
-end
 local REPRO_STAGES={}
 for _,name in ipairs({'设置选项','UI风格','InkFolio 设置','显示内容','图书信息','阅读进度','阅读摘要','外观调整',
- '联网设置','阅读目标','书库目录','底部文字','保存截图','开发者选项','关于','诊断信息',
+ '联网设置','天气城市','天气请求','天气任务','显示天气','显示日期','阅读目标','书库目录','底部文字','保存截图','开发者选项','关于','诊断信息',
  '统计说明','显示阅读摘要','摘要内容（最多2项）','周期摘要指标','阅读图表（最多2项）','全局本周','全局本月','时长＋字数','时长＋页数','周期第二项','趋势图','字数','页数','今日','本周','本月','估算已读','本次唤醒','详细日志','进度弹窗','复现记录','允许联网','更新信息','信息状态','重新匹配本书','解除本书匹配',
  '启用休眠显示','封面','评分','豆瓣月榜','预计剩余','本书已读','唤醒已读','显示摘要',
  '本书今日','本书累计','全局今日','全局累计','本周时长柱状图','本月时长柱状图',
@@ -453,11 +1732,12 @@ for _,name in ipairs({'设置选项','UI风格','InkFolio 设置','显示内容'
  '匹配认可','暂不采用','重新检索','导出预览','复制诊断','导出诊断'})do REPRO_STAGES[name]=true end
 function Inkfolio.saveDiagnostics()
     local ok=pcall(function()store:saveSetting('diagnostics_v2',Inkfolio.diagnostics);store:flush()end)
-    Inkfolio.diagnostics.save_error=not ok and '诊断保存失败' or nil
+    Inkfolio.diagnostics.save_error=not ok and L('诊断保存失败') or nil
 end
 function Inkfolio.recordAction(stage)
     if G_reader_settings:readSetting(S.repro)~=true then return end
-    stage=REPRO_STAGES[stage] and stage or '设置选项'
+    stage=source_text[stage]or stage
+    stage=REPRO_STAGES[stage]and stage or '设置选项'
     local events=Inkfolio.diagnostics.events
     events[#events+1]={at=os.time(),stage=stage}
     while #events>60 do table.remove(events,1) end
@@ -465,7 +1745,7 @@ function Inkfolio.recordAction(stage)
 end
 function Inkfolio.safeFrame(source,line,name)
     local path=tostring(source or ''):gsub('\\','/')
-    local file='外部调用'
+    local file=L('外部调用')
     if path:find('2-inkfolio.lua',1,true) or path:find('-- InkFolio',1,true) then file='2-inkfolio.lua'
     else
         local relative=path:match('(frontend/[%w_./-]+%.lua)')
@@ -487,7 +1767,8 @@ function Inkfolio.captureError(stage,err)
         frames[#frames+1]=Inkfolio.safeFrame(info.source,info.currentline,info.name)
     end
     local errors=Inkfolio.diagnostics.errors
-    errors[#errors+1]={at=os.time(),stage=REPRO_STAGES[stage] and stage or '设置选项',code=code,frames=frames}
+    stage=source_text[stage]or stage
+    errors[#errors+1]={at=os.time(),stage=REPRO_STAGES[stage]and stage or '设置选项',code=code,frames=frames}
     while #errors>10 do table.remove(errors,1) end
     Inkfolio.lastPrivateError=text
     Inkfolio.saveDiagnostics()
@@ -502,7 +1783,7 @@ function Inkfolio.guard(stage,fn,...)
         collect(fn(unpack(arguments,1,arguments.n)))
     end,function(e)
         local captured=pcall(Inkfolio.captureError,stage,e)
-        if not captured then Inkfolio.diagnostics.save_error='异常记录失败' end
+        if not captured then Inkfolio.diagnostics.save_error=L('异常记录失败') end
         return e
     end)
     guardDepth=guardDepth-1
@@ -511,141 +1792,201 @@ function Inkfolio.guard(stage,fn,...)
 end
 function Inkfolio.diagnosticContextText()
     local function capability(obj,method)
-        if type(obj[method])~='function' then return '接口不可用' end
+        if type(obj[method])~='function' then return L('接口不可用') end
         local ok,value=pcall(obj[method],obj)
-        return ok and tostring(value) or '读取失败'
+        return ok and tostring(value) or L('读取失败')
     end
-    local lines={'屏幕方向：'..(Screen:getWidth()>Screen:getHeight() and '横屏' or '竖屏'),
-        '屏幕DPI：'..capability(Screen,'getDPI'),'界面缩放（100单位）：'..capability({read=function()return Screen:scaleBySize(100)end},'read'),
-        '休眠显示支持：'..capability(Device,'supportsScreensaver'),
-        '休眠显示选择：'..(G_reader_settings:readSetting('screensaver_type')=='book_receipt' and 'InkFolio' or '其他'),
-        '外观宽度：'..tostring(G_reader_settings:readSetting(S.width) or .72),
-        '字号倍率：'..tostring(G_reader_settings:readSetting(S.font) or 1),
-        '整体比例：'..tostring(G_reader_settings:readSetting(S.scale) or 1),
-        '背景：'..tostring(G_reader_settings:readSetting(S.background) or 'white'),
-        '首次比例适配：'..(G_reader_settings:readSetting(S.auto_fit)==true and '等待图书数据' or '未待处理'),
-        '进度弹窗：'..(enabled(S.progress) and '开启' or '关闭'),
-        '复现记录：'..(G_reader_settings:readSetting(S.repro)==true and '开启' or '关闭'),
-        '诊断保存：'..(Inkfolio.diagnostics.save_error or '未发现错误')}
-    for _,item in ipairs({{'封面',S.cover},{'评分',S.score},{'豆瓣月榜',S.intro},{'阅读摘要',S.stats}})do
-        lines[#lines+1]=item[1]..'：'..(enabled(item[2]) and '开启' or '关闭')
+    local lines={L('屏幕方向：')..(Screen:getWidth()>Screen:getHeight() and L('横屏') or L('竖屏')),
+        L('屏幕DPI：')..capability(Screen,'getDPI'),L('界面缩放（100单位）：')..capability({read=function()return Screen:scaleBySize(100)end},'read'),
+        L('休眠显示支持：')..capability(Device,'supportsScreensaver'),
+        L('休眠显示选择：')..(G_reader_settings:readSetting('screensaver_type')=='book_receipt' and 'InkFolio' or L('其他')),
+        L('外观宽度：')..tostring(G_reader_settings:readSetting(S.width) or .72),
+        L('字号倍率：')..tostring(G_reader_settings:readSetting(S.font) or 1),
+        L('整体比例：')..tostring(G_reader_settings:readSetting(S.scale) or 1),
+        L('背景：')..tostring(G_reader_settings:readSetting(S.background) or 'white'),
+        L('首次比例适配：')..(G_reader_settings:readSetting(S.auto_fit)==true and L('等待图书数据') or L('未待处理')),
+        L('进度弹窗：')..(enabled(S.progress) and L('开启') or L('关闭')),
+        L('复现记录：')..(G_reader_settings:readSetting(S.repro)==true and L('开启') or L('关闭')),
+        L('诊断保存：')..(L(Inkfolio.diagnostics.save_error)or L('未发现错误'))}
+    for _,item in ipairs({{L('封面'),S.cover},{L('评分'),S.score},{L('豆瓣月榜'),S.intro},{L('阅读摘要'),S.stats}})do
+        lines[#lines+1]=item[1]..(Inkfolio.language()=='en_US'and ': 'or '：')..(enabled(item[2]) and L('开启') or L('关闭'))
     end
-    for _,item in ipairs({{'估算已读',S.word_book},{'本次唤醒',S.word_session},{'预计剩余',S.remain}})do
-        lines[#lines+1]=item[1]..'：'..(Inkfolio.progressEnabled(item[2]) and '开启' or '关闭')
+    for _,item in ipairs({{L('估算已读'),S.word_book},{L('本次唤醒'),S.word_session},{L('预计剩余'),S.remain}})do
+        lines[#lines+1]=item[1]..(Inkfolio.language()=='en_US'and ': 'or '：')..(Inkfolio.progressEnabled(item[2]) and L('开启') or L('关闭'))
     end
     if Inkfolio.lastLayout then
         local d=Inkfolio.lastLayout
-        lines[#lines+1]=string.format('最近小票尺寸：%d×%d；屏幕：%d×%d；%s',d.width,d.height,d.screen_w,d.screen_h,d.valid and '完整适屏' or '超出屏幕')
-    else lines[#lines+1]='最近小票尺寸：未渲染' end
+        lines[#lines+1]=string.format(L('最近小票尺寸：%d×%d；屏幕：%d×%d；%s'),d.width,d.height,d.screen_w,d.screen_h,d.valid and L('完整适屏') or L('超出屏幕'))
+    else lines[#lines+1]=L('最近小票尺寸：未渲染') end
     local selected=G_reader_settings:readSetting(S.summary) or {}
-    local labels={book_today='本书今日',book_total='本书累计',global_today='今日阅读',global_week='本周阅读',global_month='本月阅读',global_total='全局累计'}
+    local labels={book_today=L('本书今日'),book_total=L('本书累计'),global_today=L('今日阅读'),global_week=L('本周阅读'),global_month=L('本月阅读'),global_total=L('全局累计')}
     local summaries={};for _,id in ipairs(selected)do if labels[id] then summaries[#summaries+1]=labels[id] end end
-    lines[#lines+1]='摘要组合：'..table.concat(summaries,'、')
-    lines[#lines+1]='周期摘要指标：时长＋'..(Inkfolio.summaryMetric()=='words' and '字数' or '页数')
+    lines[#lines+1]=L('摘要组合：')..table.concat(summaries,Inkfolio.language()=='en_US'and ', 'or '、')
+    lines[#lines+1]=L('周期摘要指标：时长＋')..(Inkfolio.summaryMetric()=='words' and L('字数') or L('页数'))
     local charts={};for _,item in ipairs(Inkfolio.chartItems())do charts[#charts+1]=item.label end
-    lines[#lines+1]='阅读图表：'..(#charts>0 and table.concat(charts,'、') or '关闭')
-    lines[#lines+1]='每日记录保存：'..(Inkfolio.wordState.storage_error or '未发现错误')
+    lines[#lines+1]=L('阅读图表：')..(#charts>0 and table.concat(charts,Inkfolio.language()=='en_US'and ', 'or '、') or L('关闭'))
+    lines[#lines+1]=L('每日记录保存：')..(L(Inkfolio.wordState.storage_error)or L('未发现错误'))
     local theme=Inkfolio.uiStyle()
-    lines[#lines+1]='UI风格：'..theme.label
+    lines[#lines+1]=L('UI风格：')..theme.label
     for _,file in ipairs(theme.assets)do
         local ok,face=pcall(Font.getFace,Font,file,20)
-        lines[#lines+1]='界面字体 '..file..'：'..(ok and face and '可加载' or '无法加载')
+        lines[#lines+1]=L('界面字体 ')..file..(Inkfolio.language()=='en_US'and ': 'or '：')..(ok and face and L('可加载') or L('无法加载'))
     end
     local icon=require('ui/widget/iconwidget'):new{icon='appbar.tools'}
-    lines[#lines+1]='工具图标：'..(icon.file and not icon.file:find('icon-not-found',1,true) and '可加载' or '缺失')
+    lines[#lines+1]=L('工具图标：')..(icon.file and not icon.file:find('icon-not-found',1,true) and L('可加载')or L('缺失'))
     icon:free()
     local ui=ReaderUI.instance
-    lines[#lines+1]='当前界面：'..(ui and ui.document and '阅读' or '非阅读')
+    lines[#lines+1]=L('当前界面：')..(ui and ui.document and L('阅读') or L('非阅读'))
     local file=ui and ui.document and ui.document.file
     local format=file and file:match('%.([%w]+)$')
     local formats={epub=true,pdf=true,mobi=true,azw=true,azw3=true,fb2=true,txt=true,rtf=true,djvu=true,cbz=true,cbr=true,html=true,htm=true,md=true,doc=true,docx=true,pdb=true,prc=true,xps=true,zip=true}
     format=format and format:lower()
-    lines[#lines+1]='当前图书格式：'..(formats[format] and format:upper() or file and '其他格式' or '无当前图书')
-    lines[#lines+1]='复现操作（最多60条）：'
+    lines[#lines+1]=L('当前图书格式：')..(formats[format] and format:upper() or file and L('其他格式') or L('无当前图书'))
+    lines[#lines+1]=L('复现操作（最多60条）：')
     for _,e in ipairs(Inkfolio.diagnostics.events)do
-        lines[#lines+1]=infoTime(e.at)..' | '..(REPRO_STAGES[e.stage] and e.stage or '设置选项')
+        lines[#lines+1]=infoTime(e.at)..' | '..(REPRO_STAGES[e.stage] and L(e.stage) or L('设置选项'))
     end
-    lines[#lines+1]='InkFolio异常（最多10条）：'
+    lines[#lines+1]=L('InkFolio异常（最多10条）：')
     for _,e in ipairs(Inkfolio.diagnostics.errors)do
         local codes={LUA_INDEX_ERROR=true,LUA_CALL_ERROR=true,LUA_ARGUMENT_ERROR=true,LUA_ASSERTION_ERROR=true,LUA_ERROR=true}
-        lines[#lines+1]=infoTime(e.at)..' | '..(REPRO_STAGES[e.stage] and e.stage or '设置选项')..' | '..(codes[e.code] and e.code or 'LUA_ERROR')
+        lines[#lines+1]=infoTime(e.at)..' | '..(REPRO_STAGES[e.stage] and L(e.stage) or L('设置选项'))..' | '..(codes[e.code] and e.code or 'LUA_ERROR')
         for _,f in ipairs(e.frames or {})do
             local safe=Inkfolio.safeFrame(f.file,f.line,f.fn)
             lines[#lines+1]=safe.file..':'..safe.line..' '..safe.fn
         end
     end
-    if #Inkfolio.diagnostics.errors==0 then lines[#lines+1]='没有InkFolio异常记录；启动或原生崩溃可能需要脱敏crash.log。' end
+    if #Inkfolio.diagnostics.errors==0 then lines[#lines+1]=L('没有InkFolio异常记录；启动或原生崩溃可能需要脱敏crash.log。') end
     return table.concat(lines,'\n')
 end
+function Inkfolio.textViewer(options)
+    local viewer=require('ui/widget/textviewer'):new(options)
+    if Inkfolio.language()=='en_US'and viewer.button_table then
+        local labels={[_('Close')]='Close',[_('Find')]='Find'}
+        local function localizeButtons(self)
+            for _,row in ipairs(self.button_table.buttons_layout)do for _,button in ipairs(row)do
+                if labels[button.text]then button:setText(labels[button.text],button.width)end
+            end end
+        end
+        localizeButtons(viewer)
+        local init=viewer.init
+        viewer.init=function(self,...)init(self,...);localizeButtons(self)end
+        -- Keep search local to this viewer; changing gettext would affect KOReader.
+        viewer.findDialog=function(self)
+            local dialog
+            dialog=require('ui/widget/inputdialog'):new{
+                title=L('查找内容'),input=self.search_value,
+                buttons={{{text=L('取消'),id='close',callback=function()UIManager:close(dialog)end},
+                    {text=L('查找首个'),callback=function()self._find_next=false;self:findCallback(dialog)end},
+                    {text=L('查找下一个'),is_enter_default=true,callback=function()self._find_next=true;self:findCallback(dialog)end}}}}
+            local case
+            case=require('ui/widget/checkbutton'):new{text=L('区分大小写'),checked=self.case_sensitive,parent=dialog,
+                callback=function()self.case_sensitive=case.checked end}
+            dialog:addWidget(case)
+            UIManager:show(dialog);dialog:onShowKeyboard(true)
+        end
+        viewer.findCallback=function(self,dialog)
+            if dialog then
+                self.search_value=dialog:getInputText()
+                if self.search_value==''then return end
+                UIManager:close(dialog)
+            end
+            -- All InkFolio viewers contain plain text. The native scroll widget
+            -- was renamed between KOReader 2025.04 and 2026.07.
+            local scroll=assert(self.scroll_widget or self.scroll_text_w)
+            local start=1
+            if self._find_next then
+                local pos,line=scroll:getCharPos()
+                start=math.abs(line-self._old_virtual_line_num)>self.find_centered_lines_count
+                    and scroll:getCharPosAtXY(0,0)or (pos or 0)+1
+            end
+            local pos,search_chars
+            pos,self.charlist,search_chars=util.stringSearch(self.charlist or self.text,self.search_value,self.case_sensitive,start)
+            if pos>0 then
+                self:setTextBold(pos,#search_chars)
+                scroll=assert(self.scroll_widget or self.scroll_text_w)
+                scroll:moveCursorToCharPos(pos,self.find_centered_lines_count)
+                self._find_next=true;self._old_virtual_line_num=select(2,scroll:getCharPos())
+            else self._find_next=false;self._old_virtual_line_num=1 end
+            if self._find_next_button~=self._find_next then
+                self._find_next_button=self._find_next
+                local button=self.button_table:getButtonById('find')
+                button:setText(self._find_next and L('查找下一个')or 'Find',button.width);button:refresh()
+            end
+            UIManager:show(require('ui/widget/notification'):new{text=self._find_next and 'Match found.'or L('未找到匹配内容。')})
+        end
+    end
+    return viewer
+end
+
 function Inkfolio.previewDiagnostics()
     Inkfolio.recordAction('导出预览')
-    UIManager:show(require('ui/widget/textviewer'):new{title='诊断导出预览（脱敏）',text=Inkfolio.diagnosticText(false),
+    UIManager:show(Inkfolio.textViewer{title=L('诊断导出预览（脱敏）'),text=Inkfolio.diagnosticText(false),
         justified=false,show_menu=false,add_default_buttons=true,
-        buttons_table={{{text='复制',callback=Inkfolio.copyDiagnostics},{text='导出',callback=Inkfolio.exportDiagnostics}}}})
+        buttons_table={{{text=L('复制'),callback=Inkfolio.copyDiagnostics},{text=L('导出'),callback=Inkfolio.exportDiagnostics}}}})
 end
 
 function Inkfolio.diagnosticText(private)
     local ok,revision=pcall(function()return require('version'):getCurrentRevision()end)
     local goal=Inkfolio.goalConfig()
     local lines={
-        'InkFolio诊断报告（默认脱敏）','InkFolio版本：v'..VERSION,
-        '构建标识：'..BUILD_ID,
-        'KOReader版本：'..(ok and tostring(revision) or '读取失败'),
-        '设备：'..tostring(Device.model or '未提供'),'分辨率：'..Screen:getWidth()..'×'..Screen:getHeight(),
-        '允许联网：'..(networkingEnabled() and '是' or '否'),
-        '网络连接：'..(connected() and '已连接' or '未连接'),
-        '阅读目标：'..(goal.enabled and '启用' or '停用')..' · '..goal.period..' · '..goal.metric,
-        '目标值：'..Inkfolio.goalTargetText(goal),
-        '网络任务：'..(RUN.sleeping and '休眠中' or RUN.worker and '请求执行中' or RUN.active and '任务进行中' or '空闲'),
-        '任务类型：'..(RUN.worker and RUN.worker.kind=='monthly' and '豆瓣月榜' or RUN.info_task and '图书' or '无'),
-        '当前请求阶段：'..(RUN.worker and RUN.request_stage or '无'),
-        '图书任务进度：'..(RUN.active and ((RUN.total or 0)>0 and tostring(RUN.done or 0)..' / '..RUN.total or '扫描中，尚未确定总数') or '无进行中的图书任务'),
-        '图书缓存条目：'..countRecords(CACHE),
-        '待确认图书：'..Inkfolio.pendingCount(),
-        '用户确认匹配关系：'..countRecords(Inkfolio.matchState.choices),
-        '含有效评分的缓存：'..countRecords(CACHE,function(r)return type(r)=='table' and tonumber(r.rating) and tonumber(r.rating)>0 and tonumber(r.rating)<=10 and validURL(r.url)end),
-        '含缓存简介的条目：'..countRecords(CACHE,function(r)return type(r)=='table' and type(r.intro)=='string' and r.intro~=''end),
-        '月榜分类：'..Inkfolio.monthlyCategory().label,
-        '月榜锁屏轮换：'..(G_reader_settings:readSetting(S.monthly_rotate)==true and '开启' or '关闭'),
-        '月榜显示位置：'..tostring(Inkfolio.monthly.cursor or 1),
-        '月榜缓存：'..(Inkfolio.monthly.record and Inkfolio.validMonthly(Inkfolio.monthly.record) and
-            string.format('%d年%d月',Inkfolio.monthly.record.year,Inkfolio.monthly.record.month) or '无有效缓存'),
-        '月榜最近尝试：'..infoTime(Inkfolio.monthly.attempt_at),
-        '月榜最近结果：'..tostring(Inkfolio.monthly.result or '未获取'),
-        '月榜错误：'..(private and tostring(Inkfolio.monthly.error or '无') or errorCategory(Inkfolio.monthly.error)),
-        '详细日志：'..(G_reader_settings:readSetting(S.debug_log)==true and '开启' or '关闭'),
-        '记录保存状态（本次运行）：'..(STATUS.write_error or '未发现保存错误'),
-        '日志写入状态（本次运行）：'..(STATUS.log_error or '未发现写入错误'),
-        '当前运行错误：'..(private and tostring(RUN.last_error or RUN.last_book_error or '无') or errorCategory(RUN.last_error or RUN.last_book_error)),
-        '最近任务结果（最多20条）：',
+        L('InkFolio诊断报告（默认脱敏）'),L('InkFolio版本：v')..VERSION,
+        L('构建标识：')..BUILD_ID,
+        L('KOReader版本：')..(ok and tostring(revision) or L('读取失败')),
+        L('设备：')..tostring(Device.model or L('未提供')),L('分辨率：')..Screen:getWidth()..'×'..Screen:getHeight(),
+        L('允许联网：')..(networkingEnabled() and L('是') or L('否')),
+        L('网络连接：')..(connected() and L('已连接') or L('未连接')),
+        L('阅读目标：')..(goal.enabled and L('启用') or L('停用'))..' · '..goal.period..' · '..goal.metric,
+        L('目标值：')..Inkfolio.goalTargetText(goal),
+        L('网络任务：')..(RUN.sleeping and L('休眠中') or RUN.worker and L('请求执行中') or RUN.active and L('任务进行中') or L('空闲')),
+        L('任务类型：')..(RUN.worker and RUN.worker.kind=='monthly' and L('豆瓣月榜') or RUN.info_task and (RUN.info_task.kind=='weather' and L('天气') or L('图书')) or L('无')),
+        L('当前请求阶段：')..(RUN.worker and RUN.request_stage or L('无')),
+        L('图书任务进度：')..(RUN.active and ((RUN.total or 0)>0 and tostring(RUN.done or 0)..' / '..RUN.total or L('扫描中，尚未确定总数')) or L('无进行中的图书任务')),
+        L('图书缓存条目：')..countRecords(CACHE),
+        L('待确认图书：')..Inkfolio.pendingCount(),
+        L('用户确认匹配关系：')..countRecords(Inkfolio.matchState.choices),
+        L('含有效评分的缓存：')..countRecords(CACHE,function(r)return type(r)=='table' and tonumber(r.rating) and tonumber(r.rating)>0 and tonumber(r.rating)<=10 and validURL(r.url)end),
+        L('含缓存简介的条目：')..countRecords(CACHE,function(r)return type(r)=='table' and type(r.intro)=='string' and r.intro~=''end),
+        L('月榜分类：')..Inkfolio.monthlyCategory().label,
+        L('月榜锁屏轮换：')..(G_reader_settings:readSetting(S.monthly_rotate)==true and L('开启') or L('关闭')),
+        L('月榜显示位置：')..tostring(Inkfolio.monthly.cursor or 1),
+        L('月榜缓存：')..(Inkfolio.monthly.record and Inkfolio.validMonthly(Inkfolio.monthly.record) and
+            string.format(L('%d年%d月'),Inkfolio.monthly.record.year,Inkfolio.monthly.record.month) or L('无有效缓存')),
+        L('月榜最近尝试：')..infoTime(Inkfolio.monthly.attempt_at),
+        L('月榜最近结果：')..tostring(L(Inkfolio.monthly.result) or L('未获取')),
+        L('月榜错误：')..(private and tostring(L(Inkfolio.monthly.error) or L('无')) or errorCategory(Inkfolio.monthly.error)),
+        L('详细日志：')..(G_reader_settings:readSetting(S.debug_log)==true and L('开启') or L('关闭')),
+        L('记录保存状态（本次运行）：')..(STATUS.write_error or L('未发现保存错误')),
+        L('日志写入状态（本次运行）：')..(STATUS.log_error or L('未发现写入错误')),
+        L('当前运行错误：')..(private and tostring(RUN.last_error or RUN.last_book_error or L('无')) or errorCategory(RUN.last_error or RUN.last_book_error)),
+        L('最近任务结果（最多20条）：'),
     }
     for i=#STATUS.history,1,-1 do
         local e=STATUS.history[i]
-        lines[#lines+1]=infoTime(e.finished_at)..' | '..(e.kind=='books' and '图书' or '批次')..' | '..(RESULTS[e.result] or e.result)
-            ..' | '..(private and tostring(e.reason or '无') or errorCategory(e.reason))
+        lines[#lines+1]=infoTime(e.finished_at)..' | '..(e.kind=='books' and L('图书') or e.kind=='weather' and L('天气') or L('批次'))..' | '..(L(RESULTS[e.result]) or e.result)
+            ..' | '..(private and tostring(L(e.reason)or L('无')) or errorCategory(e.reason))
     end
-    if #STATUS.history==0 then lines[#lines+1]='尚无任务记录' end
+    if #STATUS.history==0 then lines[#lines+1]=L('尚无任务记录') end
     for i=#STATUS.history,1,-1 do
         local e=STATUS.history[i]
         if e.result=='failed' or e.result=='partial' then
-            lines[#lines+1]='最近失败（历史记录）：'..infoTime(e.finished_at)..' | '..(private and tostring(e.reason or '未记录具体原因') or errorCategory(e.reason))
+            lines[#lines+1]=L('最近失败（历史记录）：')..infoTime(e.finished_at)..' | '..(private and tostring(L(e.reason)or L('未记录具体原因')) or errorCategory(e.reason))
             break
         end
     end
     lines[#lines+1]=Inkfolio.diagnosticContextText()
-    if private and Inkfolio.lastPrivateError then lines[#lines+1]='本次InkFolio异常原文（仅本机）：'..Inkfolio.lastPrivateError end
-    lines[#lines+1]='复制内容可能仅进入设备内部剪贴板；向手机反馈请导出报告。'
-    if private then lines[1]='InkFolio诊断信息（错误原文仅本机显示，复制／导出均脱敏）' end
+    if private and Inkfolio.lastPrivateError then lines[#lines+1]=L('本次InkFolio异常原文（仅本机）：')..Inkfolio.lastPrivateError end
+    lines[#lines+1]=L('复制内容可能仅进入设备内部剪贴板；向手机反馈请导出报告。')
+    if private then lines[1]=L('InkFolio诊断信息（错误原文仅本机显示，复制／导出均脱敏）') end
     return table.concat(lines,'\n')
 end
 function Inkfolio.copyDiagnostics()
     Inkfolio.recordAction('复制诊断')
     if type(Device.hasClipboard)~='function' or not Device:hasClipboard() or not Device.input or type(Device.input.setClipboardText)~='function' then
-        Inkfolio.message('此设备的剪贴板接口不可用，请导出诊断报告。');return false
+        Inkfolio.message(L('此设备的剪贴板接口不可用，请导出诊断报告。'));return false
     end
     local ok,reason=pcall(Device.input.setClipboardText,Inkfolio.diagnosticText(false))
-    if ok and reason==false then ok=false;reason='剪贴板拒绝写入' end
-    Inkfolio.message(ok and '已复制脱敏诊断信息到设备剪贴板，可能仅在本设备内可粘贴。' or '复制失败：'..tostring(reason))
+    if ok and reason==false then ok=false;reason=L('剪贴板拒绝写入') end
+    Inkfolio.message(ok and L('已复制脱敏诊断信息到设备剪贴板，可能仅在本设备内可粘贴。') or L('复制失败：')..tostring(reason))
     return ok
 end
 function Inkfolio.exportDiagnostics()
@@ -653,91 +1994,107 @@ function Inkfolio.exportDiagnostics()
     local dir=DataStorage:getSettingsDir()..'/inkfolio-diagnostics'
     local path
     local ok,err=pcall(function()
-        assert(util.makePath(dir)~=false,'诊断目录无法创建')
+        assert(util.makePath(dir)~=false,L('诊断目录无法创建'))
         local stem=dir..'/Inkfolio-diagnostic-'..os.date('%Y%m%d-%H%M%S')
         local n=0;path=stem..'.txt'
         while lfs.attributes(path) do n=n+1;path=stem..'-'..n..'.txt' end
         local file=assert(io.open(path,'wb'))
         local wrote,why=file:write(Inkfolio.diagnosticText(false));local closed=file:close()
-        assert(wrote and closed,why or '报告写入失败')
+        assert(wrote and closed,why or L('报告写入失败'))
     end)
-    if not ok then if path then os.remove(path)end;Inkfolio.message('诊断报告导出失败：'..tostring(err));return false end
-    Inkfolio.message('已导出脱敏报告：\n'..path);return path
+    if not ok then if path then os.remove(path)end;Inkfolio.message(L('诊断报告导出失败：')..tostring(err));return false end
+    Inkfolio.message(L('已导出脱敏报告：\n')..path);return path
 end
 function Inkfolio.showDiagnostics()
     local viewer
     local function open()
         if viewer then UIManager:close(viewer)end
-        viewer=require('ui/widget/textviewer'):new{title='InkFolio诊断信息',text=Inkfolio.diagnosticText(true),
-            text_selection_callback=function()Inkfolio.message('错误原文不复制，请使用“复制”按钮获取脱敏报告。')end,
+        viewer=Inkfolio.textViewer{title=L('InkFolio诊断信息'),text=Inkfolio.diagnosticText(true),
+            text_selection_callback=function()Inkfolio.message(L('错误原文不复制，请使用“复制”按钮获取脱敏报告。'))end,
             justified=false,show_menu=false,add_default_buttons=true,
-            buttons_table={{ {text='刷新',callback=open},{text='复制',enabled=type(Device.hasClipboard)=='function' and Device:hasClipboard(),callback=Inkfolio.copyDiagnostics},
-                {text='导出预览',callback=Inkfolio.previewDiagnostics} }} }
+            buttons_table={{ {text=L('刷新'),callback=open},{text=L('复制'),enabled=type(Device.hasClipboard)=='function' and Device:hasClipboard(),callback=Inkfolio.copyDiagnostics},
+                {text=L('导出预览'),callback=Inkfolio.previewDiagnostics} }} }
         UIManager:show(viewer)
     end
     open()
 end
 function Inkfolio.informationText(ui)
-    local lines={'当前图书信息','允许联网：'..(networkingEnabled() and '是' or '否'),'网络连接：'..(connected() and '已连接' or '未连接')}
+    local lines={L('当前图书信息'),L('允许联网：')..(networkingEnabled() and L('是') or L('否')),L('网络连接：')..(connected() and L('已连接') or L('未连接'))}
     if ui and ui.document then
         local book=extractBook(ui.doc_props,ui.document.file);local record=cached(book)
-        lines[#lines+1]='书名：'..book.title
+        lines[#lines+1]=L('书名：')..book.title
         local identity=Inkfolio.searchIdentity(book)
-        lines[#lines+1]='搜索书名：'..identity.query..(Inkfolio.searchOverride(book) and '（自定义）' or '（默认）')
-        lines[#lines+1]='书名依据：'..identity.source
-        if identity.note then lines[#lines+1]='书名检查：'..identity.note end
+        lines[#lines+1]=L('搜索书名：')..identity.query..(Inkfolio.searchOverride(book) and L('（自定义）') or L('（默认）'))
+        lines[#lines+1]=L('书名依据：')..L(identity.source)
+        if identity.note then lines[#lines+1]=L('书名检查：')..L(identity.note) end
         local pending=Inkfolio.matchState.pending[Inkfolio.fileMatchKey(book)]
-        if pending then lines[#lines+1]='匹配状态：待用户确认（'..#pending.candidates..'个候选）；'..tostring(pending.reason or '') end
+        if pending then lines[#lines+1]=L('匹配状态：待用户确认（')..#pending.candidates..L('个候选）；')..L(pending.reason) or '' end
         if record then
-            lines[#lines+1]='身份核验：'..(record.user_confirmed and '用户确认匹配' or record.identity_version==2 and '详情页核验' or '历史缓存，未经新规则核验')
-            if record.matched_title then lines[#lines+1]='匹配图书：'..record.matched_title end
-            if record.identity_sources then for _,url in ipairs(record.identity_sources)do lines[#lines+1]='核验来源：'..url end end
+            lines[#lines+1]=L('身份核验：')..(record.user_confirmed and L('用户确认匹配') or record.identity_version==2 and L('详情页核验') or L('历史缓存，未经新规则核验'))
+            if record.matched_title then lines[#lines+1]=L('匹配图书：')..record.matched_title end
+            if record.identity_sources then for _,url in ipairs(record.identity_sources)do lines[#lines+1]=L('核验来源：')..url end end
         end
-        if record and not Inkfolio.cacheMatches(book,record) then lines[#lines+1]='缓存状态：搜索书名或卷册范围已变化，待重新获取' end
+        if record and not Inkfolio.cacheMatches(book,record) then lines[#lines+1]=L('缓存状态：搜索书名或卷册范围已变化，待重新获取') end
         if record then
-            lines[#lines+1]='评分：'..record.rating..'/10；'..(record.score_kind=='volumes' and ('已匹配分册均分（'..#record.matched_volumes..'册）') or ('参与平均版本：'..tostring(record.rated_versions or '未记录')))
+            lines[#lines+1]=L('评分：')..record.rating..'/10；'..(record.score_kind=='volumes' and (L('已匹配分册均分（')..#record.matched_volumes..L('册）')) or (L('参与平均版本：')..tostring(record.rated_versions or L('未记录'))))
             if record.score_kind=='volumes' then
-                for _,v in ipairs(record.matched_volumes) do lines[#lines+1]=string.format('%s均分：%.2f/10；已匹配版本：%d',type(v.volume)=='number' and ('第'..v.volume..'册') or v.volume,v.rating,v.versions) end
+                for _,v in ipairs(record.matched_volumes) do lines[#lines+1]=string.format(L('%s均分：%.2f/10；已匹配版本：%d'),type(v.volume)=='number' and (L('第')..v.volume..L('册')) or v.volume,v.rating,v.versions) end
             end
-            lines[#lines+1]='评分最近成功：'..infoTime(record.rating_updated_at)
+            lines[#lines+1]=L('评分最近成功：')..infoTime(record.rating_updated_at)
             if type(record.rating_sources)=='table' then
-                for _,source in ipairs(record.rating_sources)do lines[#lines+1]='评分来源：'..source.via..(source.volume and (' 第'..source.volume..'册') or '')..(source.title and (' · '..source.title) or '')..' | '..source.rating..' | '..source.url end
-            else lines[#lines+1]='评分来源：存在豆瓣链接，具体评分来源明细未记录' end
-        else lines[#lines+1]='评分：尚无有效缓存' end
+                for _,source in ipairs(record.rating_sources)do lines[#lines+1]=L('评分来源：')..L(source.via)..(source.volume and (L(' 第')..source.volume..L('册')) or '')..(source.title and (' · '..source.title) or '')..' | '..source.rating..' | '..source.url end
+            else lines[#lines+1]=L('评分来源：存在豆瓣链接，具体评分来源明细未记录') end
+        else lines[#lines+1]=L('评分：尚无有效缓存') end
         if book.description~='' then
-            lines[#lines+1]='简介来源：书籍文件内元数据（没有联网获取时间）'
+            lines[#lines+1]=L('简介来源：书籍文件内元数据（没有联网获取时间）')
         elseif record and record.intro and record.intro~='' then
-            lines[#lines+1]='简介来源：'..(record.intro_source and '豆瓣详情页 '..record.intro_source or '历史缓存，来源未记录')
-            if record.intro_volume then lines[#lines+1]='简介取自：'..(type(record.intro_volume)=='number' and ('第'..record.intro_volume..'册') or record.intro_volume)..'（'..tostring(record.intro_title or '标题未记录')..'），不代表全集简介' end
-            lines[#lines+1]='简介最近成功：'..infoTime(record.intro_updated_at)
-        else lines[#lines+1]='简介：'..(record and record.intro_state=='absent' and '来源确认没有简介' or record and record.intro_state=='failed' and '字段获取失败，允许重试' or '尚无可显示内容') end
-        if record then lines[#lines+1]='缓存记录时间：'..infoTime(record.updated_at)..'（旧记录不等于各字段的成功时间）' end
+            lines[#lines+1]=L('简介来源：')..(record.intro_source and L('豆瓣详情页 ')..record.intro_source or L('历史缓存，来源未记录'))
+            if record.intro_volume then lines[#lines+1]=L('简介取自：')..(type(record.intro_volume)=='number' and (L('第')..record.intro_volume..L('册')) or record.intro_volume)..'（'..tostring(record.intro_title or L('标题未记录'))..L('），不代表全集简介') end
+            lines[#lines+1]=L('简介最近成功：')..infoTime(record.intro_updated_at)
+        else lines[#lines+1]=L('简介：')..(record and record.intro_state=='absent' and L('来源确认没有简介') or record and record.intro_state=='failed' and L('字段获取失败，允许重试') or L('尚无可显示内容')) end
+        if record then lines[#lines+1]=L('缓存记录时间：')..infoTime(record.updated_at)..L('（旧记录不等于各字段的成功时间）') end
         local status=STATUS.books[bookKey(book)]
         if status then
-            lines[#lines+1]='最近尝试：'..infoTime(status.attempt_at)
+            lines[#lines+1]=L('最近尝试：')..infoTime(status.attempt_at)
             local active=RUN.info_task and RUN.info_task.kind=='books' and RUN.info_task.key==bookKey(book)
-            lines[#lines+1]='最近结果：'..(status.result=='running' and (active and '获取中' or '上次任务未完成') or RESULTS[status.result])
-            lines[#lines+1]='原因：'..tostring(status.reason or '无')
-        else lines[#lines+1]='最近尝试：未记录' end
-    else lines[#lines+1]='尚无最近阅读书籍' end
+            lines[#lines+1]=L('最近结果：')..(status.result=='running' and (active and L('获取中') or L('上次任务未完成')) or L(RESULTS[status.result]))
+            lines[#lines+1]=L('原因：')..tostring(L(status.reason) or L('无'))
+        else lines[#lines+1]=L('最近尝试：未记录') end
+    else lines[#lines+1]=L('尚无最近阅读书籍') end
     local chart=Inkfolio.monthly.record
-    lines[#lines+1]='\n月榜来源：豆瓣读书 · '..Inkfolio.monthlyCategory().label..'月榜'
-    lines[#lines+1]='锁屏轮换：'..(G_reader_settings:readSetting(S.monthly_rotate)==true and '开启' or '关闭')
-    lines[#lines+1]='榜单月份：'..(chart and Inkfolio.validMonthly(chart) and string.format('%d年%d月',chart.year,chart.month) or '暂无有效缓存')
-    lines[#lines+1]='来源链接：'..(chart and Inkfolio.validMonthly(chart) and chart.url or Inkfolio.monthlyURL())
-    lines[#lines+1]='最近成功：'..infoTime(chart and chart.updated_at)
-    lines[#lines+1]='最近尝试：'..infoTime(Inkfolio.monthly.attempt_at)
-    lines[#lines+1]='最近结果：'..tostring(Inkfolio.monthly.result or '未获取')
-    lines[#lines+1]='原因：'..tostring(Inkfolio.monthly.error or '无')
+    lines[#lines+1]=L('\n月榜来源：豆瓣读书 · ')..Inkfolio.monthlyCategory().label..L('月榜')
+    lines[#lines+1]=L('锁屏轮换：')..(G_reader_settings:readSetting(S.monthly_rotate)==true and L('开启') or L('关闭'))
+    lines[#lines+1]=L('榜单月份：')..(chart and Inkfolio.validMonthly(chart) and string.format(L('%d年%d月'),chart.year,chart.month) or L('暂无有效缓存'))
+    lines[#lines+1]=L('来源链接：')..(chart and Inkfolio.validMonthly(chart) and chart.url or Inkfolio.monthlyURL())
+    lines[#lines+1]=L('最近成功：')..infoTime(chart and chart.updated_at)
+    lines[#lines+1]=L('最近尝试：')..infoTime(Inkfolio.monthly.attempt_at)
+    lines[#lines+1]=L('最近结果：')..tostring(L(Inkfolio.monthly.result) or L('未获取'))
+    lines[#lines+1]=L('原因：')..tostring(L(Inkfolio.monthly.error) or L('无'))
+    local city=selectedWeatherCity()
+    lines[#lines+1]=L('\n天气来源：中国气象局中央气象台（nmc.cn）')
+    if city then
+        local record=WEATHER.records[city.code];local status=STATUS.weather[city.code]
+        lines[#lines+1]=L('城市：')..(Inkfolio.language()=='en_US'and Inkfolio.LOCATION_NAMES[city.name]or city.name)
+        lines[#lines+1]=L('最近成功：')..infoTime(record and record.updated_at)
+        lines[#lines+1]=L('最近尝试：')..infoTime(status and status.attempt_at)
+        local active=RUN.info_task and RUN.info_task.kind=='weather' and RUN.info_task.key==city.code
+        lines[#lines+1]=L('最近结果：')..(status and (status.result=='running' and (active and L('获取中') or L('上次任务未完成')) or L(RESULTS[status.result])) or L('未记录'))
+        lines[#lines+1]=L('缓存获取日期：')..tostring(record and record.day or L('未记录'))
+        for offset=0,1 do
+            local date=Inkfolio.weatherDate(offset)
+            lines[#lines+1]=(offset==0 and L('今日预报：') or L('明日预报：'))..date..' · '..(Inkfolio.forecastDisplay(Inkfolio.cachedWeather(record,date)) or L('暂无有效缓存'))
+        end
+        lines[#lines+1]=L('原因：')..tostring(L(status and status.reason) or L('无'))
+    else lines[#lines+1]=L('未选择城市') end
     return table.concat(lines,'\n')
 end
 function Inkfolio.showInformation()
     local viewer
     local function open()
         if viewer then UIManager:close(viewer) end
-        viewer=require('ui/widget/textviewer'):new{title='信息来源与状态',text=Inkfolio.informationText(Inkfolio.context()),
+        viewer=Inkfolio.textViewer{title=L('信息来源与状态'),text=Inkfolio.informationText(Inkfolio.context()),
             justified=false,show_menu=false,add_default_buttons=true,
-            buttons_table={{{text='刷新',callback=open}}}}
+            buttons_table={{{text=L('刷新'),callback=open}}}}
         UIManager:show(viewer)
     end
     open()
@@ -765,15 +2122,22 @@ function Inkfolio.initializeDefaults(existing)
     end
 end
 Inkfolio.initializeDefaults(previous_install)
-if G_reader_settings:readSetting(P..'qr')~=nil then
-    G_reader_settings:delSetting(P..'qr')
-    G_reader_settings:flush()
+-- Migrate the retired reading-page skin once, preserving Cover's own settings.
+local migrated=false
+if G_reader_settings:readSetting(S.ui_style)=='paper'then
+    G_reader_settings:saveSetting(S.ui_style,'cover');migrated=true
 end
+for _,key in ipairs({P..'qr',P..'paper_card_background'})do
+    if G_reader_settings:readSetting(key)~=nil then
+        G_reader_settings:delSetting(key);migrated=true
+    end
+end
+if migrated then G_reader_settings:flush()end
 -- Existing summaries displayed pages. Preserve that secondary metric on upgrade.
 if G_reader_settings:readSetting(S.summary_metric)==nil then G_reader_settings:saveSetting(S.summary_metric,previous_install and 'pages' or 'words') end
 function Inkfolio.summaryMetric()
     local metric=G_reader_settings:readSetting(S.summary_metric)
-    assert(metric=='words' or metric=='pages','摘要指标设置无效')
+    assert(metric=='words' or metric=='pages',L('摘要指标设置无效'))
     return metric
 end
 local PROGRESS_ITEMS={
@@ -812,17 +2176,17 @@ function Inkfolio.chartItems()
         chosen=(old=='week' or old=='month') and {old} or {}
         G_reader_settings:saveSetting(S.charts,chosen)
     end
-    assert(type(chosen)=='table' and #chosen<=2,'阅读图表设置无效')
+    assert(type(chosen)=='table' and #chosen<=2,L('阅读图表设置无效'))
     -- Remove the retired development chart while preserving other selections.
     local retained={}
     for _,id in ipairs(chosen) do if id~='month_heatmap' then retained[#retained+1]=id end end
     if #retained~=#chosen then chosen=retained;G_reader_settings:saveSetting(S.charts,chosen) end
     local items,seen={},{}
     for _,id in ipairs(chosen) do
-        assert(not seen[id],'阅读图表设置重复');seen[id]=true
+        assert(not seen[id],L('阅读图表设置重复'));seen[id]=true
         local found
         for _,item in ipairs(Inkfolio.CHART_ITEMS) do if item.id==id then found=item;break end end
-        assert(found,'阅读图表选项无效');items[#items+1]=found
+        assert(found,L('阅读图表选项无效'));items[#items+1]=found
     end
     return items
 end
@@ -848,12 +2212,12 @@ local function summaryItems()
 end
 
 -- Read native recorded durations, not page counts or estimated time.
-function Inkfolio.periodDays(period,now)
-    assert(period=='day' or period=='week' or period=='month','统计周期无效')
+function Inkfolio.periodDays(period,now,sunday_first)
+    assert(period=='day' or period=='week' or period=='month',L('统计周期无效'))
     now=now or os.time()
     local clock=os.date('*t',now)
     local first={year=clock.year,month=clock.month,
-        day=period=='day' and clock.day or period=='week' and (clock.day-(clock.wday+5)%7) or 1,
+        day=period=='day' and clock.day or period=='week' and (clock.day-(sunday_first and clock.wday-1 or (clock.wday+5)%7)) or 1,
         hour=0,min=0,sec=0,isdst=nil}
     local first_time=os.time(first)
     local last=period=='day' and {year=first.year,month=first.month,day=first.day+1,hour=0}
@@ -874,27 +2238,27 @@ end
 -- Load native records once per render; no second statistics database or counters.
 function Inkfolio.timeRecords(ui,first,now)
     local stats=ui and ui.statistics
-    if not stats or (stats.isEnabled and not stats:isEnabled()) then return nil,'请开启 KOReader 阅读统计' end
-    if stats.insertDB and not pcall(stats.insertDB,stats) then return nil,'阅读统计保存失败' end
-    if lfs.attributes(STATS_PATH,'mode')~='file' then return nil,'暂无阅读统计数据库' end
+    if not stats or (stats.isEnabled and not stats:isEnabled()) then return nil,L('请开启 KOReader 阅读统计') end
+    if stats.insertDB and not pcall(stats.insertDB,stats) then return nil,L('阅读统计保存失败') end
+    if lfs.attributes(STATS_PATH,'mode')~='file' then return nil,L('暂无阅读统计数据库') end
     local opened,db=pcall(SQ3.open,STATS_PATH)
-    if not opened or not db then return nil,'阅读统计无法打开' end
+    if not opened or not db then return nil,L('阅读统计无法打开') end
     local ok,rows=pcall(db.exec,db,string.format(
         'SELECT start_time,duration,id_book FROM page_stat_data WHERE duration>=0 AND start_time<%d AND start_time+duration>=%d;',now+1,first))
     db:close()
-    if not ok then logger.warn('InkFolio statistics query failed',rows);return nil,'阅读时长读取失败' end
+    if not ok then logger.warn('InkFolio statistics query failed',rows);return nil,L('阅读时长读取失败') end
     return rows or {}
 end
-function Inkfolio.readCurve(ui,period,now,records,id)
-    if period~='day' and period~='week' and period~='month' then return nil,'时长统计周期无效' end
-    local days,first,_,clock=Inkfolio.periodDays(period,now)
+function Inkfolio.readCurve(ui,period,now,records,id,sunday_first)
+    if period~='day' and period~='week' and period~='month' then return nil,L('时长统计周期无效') end
+    local days,first,_,clock=Inkfolio.periodDays(period,now,sunday_first)
     local reason
     if not records then records,reason=Inkfolio.timeRecords(ui,first,clock) end
     if not records then return nil,reason end
     for i,start in ipairs(records[1] or {}) do
         if not id or tonumber(records[3][i])==id then
-            local stamp=assert(tonumber(start),'无效统计时间')
-            local seconds=assert(tonumber(records[2][i]),'无效统计时长')
+            local stamp=assert(tonumber(start),L('无效统计时间'))
+            local seconds=assert(tonumber(records[2][i]),L('无效统计时长'))
             local finish=math.min(stamp+seconds,clock+1)
             if finish>first or (seconds==0 and stamp>=first) then for _,day in ipairs(days) do
                 local overlap=math.max(0,math.min(finish,day.finish)-math.max(stamp,day.start))
@@ -915,12 +2279,21 @@ function Inkfolio.readCurve(ui,period,now,records,id)
         elapsed=elapsed,known=known,missing=missing}
 end
 
+function Inkfolio.displayDate(timestamp)
+    if Inkfolio.language()~='en_US'then return os.date('%Y.%m.%d',timestamp)end
+    local date=os.date('*t',timestamp)
+    return ({'Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'})[date.month]..' '..date.day..', '..date.year
+end
+
 local function duration(value)
     if value == nil then return '—' end
     local n = math.max(0, math.floor(tonumber(value) or 0))
     local hours, minutes = math.floor(n/3600), math.floor(n%3600/60)
-    if hours > 0 then return string.format('%d时%d分',hours,minutes) end
-    return string.format('%d分钟', minutes)
+    if hours>0 then
+        if Inkfolio.language()=='en_US'and minutes==0 then return string.format('%dh',hours)end
+        return string.format(L('%d时%d分'),hours,minutes)
+    end
+    return string.format(L('%d分钟'), minutes)
 end
 local function scoreStars(score)
     local half = math.max(0, math.min(10, math.floor(score + 0.5))) -- /10 -> 0..10 half-stars
@@ -964,16 +2337,16 @@ end
 local PROGRESS={active=false,hidden=false,phase='',scanning=true,total=0,done=0,book=''}
 local progressTick, cancelFetch
 local function progressText()
-    local lines={PROGRESS.title or '获取信息'}
+    local lines={L(PROGRESS.title)or L('获取信息')}
     if PROGRESS.scanning then
-        lines[#lines+1]='正在扫描书库'
-        if PROGRESS.scan_total then lines[#lines+1]=string.format('%d / %d 个文件',PROGRESS.scan_done or 0,PROGRESS.scan_total) end
-    else
-        lines[#lines+1]=string.format('已处理 %d / %d 本',PROGRESS.done,PROGRESS.total)
-        lines[#lines+1]=string.format('已更新 %d 本，未完整获取 %d 本',RUN.processed or 0,RUN.failed or 0)
+        lines[#lines+1]=L('正在扫描书库')
+        if PROGRESS.scan_total then lines[#lines+1]=string.format(L('%d / %d 个文件'),PROGRESS.scan_done or 0,PROGRESS.scan_total) end
+    elseif not PROGRESS.weather_only then
+        lines[#lines+1]=string.format(L('已处理 %d / %d 本'),PROGRESS.done,PROGRESS.total)
+        lines[#lines+1]=string.format(L('已更新 %d 本，未完整获取 %d 本'),RUN.processed or 0,RUN.failed or 0)
     end
     if PROGRESS.book~='' then lines[#lines+1]=shortText(PROGRESS.book,38) end
-    if not PROGRESS.scanning or PROGRESS.phase~='正在扫描书库' then lines[#lines+1]=PROGRESS.phase end
+    if not PROGRESS.scanning or PROGRESS.phase~=L('正在扫描书库') then lines[#lines+1]=L(PROGRESS.phase) end
     return table.concat(lines,'\n')
 end
 local function progressClose()
@@ -1013,8 +2386,8 @@ local function progressPaint(force)
                 VerticalGroup:new{
                     self.text_widget,
                     ButtonTable:new{width=width,buttons={{
-                        {text='忽略',callback=progressIgnore},
-                        {text='取消',callback=function() cancelFetch() end},
+                        {text=L('忽略'),callback=progressIgnore},
+                        {text=L('取消'),callback=function() cancelFetch() end},
                     }}},
                 },
             }
@@ -1042,12 +2415,13 @@ progressTick=function()
     progressPaint(false)
     UIManager:scheduleIn(5,progressTick)
 end
-local function progressBegin(manual)
+local function progressBegin(manual,weather_only)
     progressClose()
-    PROGRESS.active,PROGRESS.hidden,PROGRESS.scanning=true,not enabled(S.progress),true
-    PROGRESS.title=manual and '手动获取图书信息' or '自动获取图书信息'
+    PROGRESS.active,PROGRESS.hidden,PROGRESS.scanning=true,not enabled(S.progress),not weather_only
+    PROGRESS.weather_only=weather_only
+    PROGRESS.title=weather_only and L('获取天气信息') or (manual and L('手动获取图书信息') or L('自动获取图书信息'))
     PROGRESS.total,PROGRESS.done,PROGRESS.book=0,0,''
-    PROGRESS.phase='正在扫描书库'
+    PROGRESS.phase=weather_only and L('正在请求天气') or L('正在扫描书库')
     PROGRESS.scan_done,PROGRESS.scan_total,PROGRESS.last_paint,PROGRESS.last_text=nil,nil,nil,nil
     progressPaint(true)
     if not PROGRESS.hidden then UIManager:scheduleIn(5,progressTick) end
@@ -1195,10 +2569,10 @@ function Inkfolio.searchIdentity(book)
         end
     end
     if supported and #authorNames(book.authors)>0 then
-        return {query=filename,source='文件名与内部标题交叉确认'}
+        return {query=filename,source=L('文件名与内部标题交叉确认')}
     end
-    result.note=supported and '缺少作者信息，未自动采用文件名中的简短书名'
-        or '文件名与内部标题不能相互确认，未自动采用文件名'
+    result.note=supported and L('缺少作者信息，未自动采用文件名中的简短书名')
+        or L('文件名与内部标题不能相互确认，未自动采用文件名')
     return result
 end
 function Inkfolio.searchTitle(book) return Inkfolio.searchIdentity(book).query end
@@ -1216,9 +2590,9 @@ function Inkfolio.validISBN(value)
 end
 local function parseDetail(html)
     local ok, parser = pcall(require, 'htmlparser')
-    if not ok then return nil, nil, '缺少 HTML 解析组件' end
+    if not ok then return nil, nil, L('缺少 HTML 解析组件') end
     local good, root = pcall(parser.parse, tostring(html or ''), 6000)
-    if not good or not root then return nil, nil, '详情页内容无法解析' end
+    if not good or not root then return nil, nil, L('详情页内容无法解析') end
     local parsed, rating, intro = pcall(function()
         local ratings = root:select('strong[property="v:average"]')
         local n = ratings[1] and tonumber(htmlText(ratings[1]:gettext()))
@@ -1229,8 +2603,8 @@ local function parseDetail(html)
         local text = node and htmlText(node:gettext()) or ''
         return n, text ~= '' and shortText(text, 240) or nil
     end)
-    if not parsed then return nil, nil, '详情页字段解析失败' end
-    if not rating then return nil, nil, '详情页没有有效评分，可能未评分或访问被限制' end
+    if not parsed then return nil, nil, L('详情页字段解析失败') end
+    if not rating then return nil, nil, L('详情页没有有效评分，可能未评分或访问被限制') end
     if not intro then return rating, nil, '详情页没有可提取的内容简介' end
     return rating, intro
 end
@@ -1244,7 +2618,7 @@ function Inkfolio.finalizeVolumes(candidates,verified_only)
             groups[c.volume]=group
             if group.versions<8 then
                 group.sum=group.sum+c.rating;group.versions=group.versions+1
-                sources[#sources+1]={url=c.url,rating=c.rating,via=c.checked_detail and '豆瓣详情页' or '豆瓣搜索页',volume=c.volume}
+                sources[#sources+1]={url=c.url,rating=c.rating,via=c.checked_detail and L('豆瓣详情页') or L('豆瓣搜索页'),volume=c.volume}
                 if not preferred or (type(c.volume)=='number' and type(preferred.volume)=='number' and c.volume<preferred.volume) or (type(c.volume)~='number' or type(preferred.volume)~='number') and tostring(c.volume)<tostring(preferred.volume) then preferred=c end
             end
         end
@@ -1286,7 +2660,7 @@ local function finalizeCandidates(candidates, verified_only)
         local c = candidates[i]
         if c.rating and (not verified_only or c.checked_detail) then
             sum, n = sum + c.rating, n + 1
-            sources[#sources+1]={url=c.url,title=c.title,rating=c.rating,via=c.checked_detail and '豆瓣详情页' or '豆瓣搜索页'}
+            sources[#sources+1]={url=c.url,title=c.title,rating=c.rating,via=c.checked_detail and L('豆瓣详情页') or L('豆瓣搜索页')}
         end
     end
     if n == 0 then return nil end
@@ -1315,13 +2689,18 @@ local HTTP_TIMEOUT = 25
 local HTTP_MAX_BYTES = 512 * 1024
 local HTTP_SEQ = 0
 
-local function stopHTTP(reason)
+local function stopHTTP(reason,retry_weather)
     local worker = RUN.worker
     if not worker then return end
     RUN.worker = nil
+    if worker.kind=='weather' then
+        WEATHER.pending=retry_weather~=false
+        WEATHER.error=reason or (RUN.sleeping and L('休眠中，天气获取已中断') or not networkingEnabled() and L('联网已关闭') or L('天气获取已中断'))
+        store:saveSetting('weather',WEATHER);store:flush()
+    end
     if worker.kind=='monthly' and Inkfolio.monthly.result=='running' then
         Inkfolio.monthly.result='interrupted'
-        Inkfolio.monthly.error=reason or (RUN.sleeping and '休眠中，月榜获取已中断' or not networkingEnabled() and '联网已关闭' or '月榜任务已中断')
+        Inkfolio.monthly.error=reason or (RUN.sleeping and L('休眠中，月榜获取已中断') or not networkingEnabled() and L('联网已关闭') or L('月榜任务已中断'))
         Inkfolio.monthly.finished_at=os.time();Inkfolio.saveMonthly()
     end
     if worker.pid and worker.pid ~= false then
@@ -1344,7 +2723,7 @@ local function markAttempt()
     RUN.started = true
     if not RUN.manual and not RUN.new_books then
         resetDay()
-        ROUNDS = math.min(MAX_AUTO, ROUNDS + 1)
+        ROUNDS = ROUNDS + 1 -- diagnostic count, not a shared per-book quota
         DAILY_DONE = true
         saveData()
     end
@@ -1352,14 +2731,14 @@ end
 
 local function sendHTTP(url, token, cb, kind)
     if RUN.sleeping or not networkingEnabled() or not connected() or token ~= RUN.token then
-        RUN.last_error=RUN.sleeping and '休眠中，任务未启动' or not networkingEnabled() and '联网已关闭'
-            or token~=RUN.token and '任务已失效' or '网络未连接'
+        RUN.last_error=RUN.sleeping and L('休眠中，任务未启动') or not networkingEnabled() and L('联网已关闭')
+            or token~=RUN.token and L('任务已失效') or L('网络未连接')
         return false
     end
-    local book_request=kind~='monthly'
-    RUN.request_stage=kind=='monthly' and '豆瓣月榜' or url:find('www.bing.com/',1,true) and 'Bing检索'
+    local book_request=kind~='monthly' and kind~='weather'
+    RUN.request_stage=kind=='weather' and L('天气请求') or kind=='monthly' and L('豆瓣月榜') or url:find('www.bing.com/',1,true) and L('Bing检索')
         or url:find('www.douban.com/search',1,true) and '豆瓣检索' or '豆瓣详情'
-    Inkfolio.debugEvent(RUN.request_stage,'开始')
+    Inkfolio.debugEvent(RUN.request_stage,L('开始'))
     if RUN.transport_broken and book_request then return false end
     if RUN.worker then
         RUN.last_error = 'HTTP worker already active'
@@ -1437,10 +2816,10 @@ local function sendHTTP(url, token, cb, kind)
         end
         if os.time() - worker.started > HTTP_TIMEOUT then
             local reason='HTTP subprocess timed out'
-            if book_request then RUN.last_error=reason end
+            Inkfolio.networkFailure(book_request,reason)
             logger.warn('READ RECEIPT:',reason)
-            stopHTTP()
-            Inkfolio.debugEvent(RUN.request_stage,'失败',reason)
+            stopHTTP(reason,false)
+            Inkfolio.debugEvent(RUN.request_stage,L('失败'),reason)
             cb('',reason)
             return
         end
@@ -1459,19 +2838,12 @@ local function sendHTTP(url, token, cb, kind)
             local reason = status and (status .. ': ' .. tostring(body):sub(1,160))
                 or 'no HTTP subprocess response'
             logger.warn('READ RECEIPT network:', reason)
-            if book_request then
-                RUN.last_error=reason
-                RUN.network_failures = RUN.network_failures + 1
-                if RUN.network_failures >= 3 then
-                    RUN.transport_broken = true
-                    logger.warn('READ RECEIPT: stopped batch after three consecutive network errors')
-                end
-            end
-            Inkfolio.debugEvent(RUN.request_stage,'失败',reason)
+            Inkfolio.networkFailure(book_request,reason)
+            Inkfolio.debugEvent(RUN.request_stage,L('失败'),reason)
             cb('',reason)
         else
-            if book_request then RUN.network_failures = 0 end
-            Inkfolio.debugEvent(RUN.request_stage,'成功，响应字节 '..#body)
+            RUN.network_failures = 0
+            Inkfolio.debugEvent(RUN.request_stage,L('成功，响应字节 ')..#body)
             cb(body)
         end
     end
@@ -1490,7 +2862,7 @@ Inkfolio.MONTHLY_CATEGORIES={
 function Inkfolio.monthlyCategory(id)
     id=id or G_reader_settings:readSetting(S.monthly_category) or 'all'
     for _,item in ipairs(Inkfolio.MONTHLY_CATEGORIES)do if item.id==id then return item end end
-    error('豆瓣月榜分类设置无效')
+    error(L('豆瓣月榜分类设置无效'))
 end
 function Inkfolio.monthlyURL(category,date,page)
     local url='https://book.douban.com/chart?subcat='..Inkfolio.monthlyCategory(category).id
@@ -1574,7 +2946,7 @@ function Inkfolio.parseMonthly(body,category,page)
         end
         return result
     end)
-    if not good then return nil,'月榜字段解析失败' end
+    if not good then return nil,L('月榜字段解析失败') end
     return record,reason
 end
 function Inkfolio.saveMonthly()
@@ -1592,7 +2964,9 @@ function Inkfolio.selectMonthlyCategory(id)
     state.attempt_day=nil;state.result=nil;state.error=nil;state.rotate_pending=nil
     Inkfolio.saveMonthly()
     if refreshQuicklook then refreshQuicklook() end
+    Inkfolio.resetNetworkPause();RUN.auto_holds.monthly=nil
     Inkfolio.monthlyCheck()
+    if startPoll then startPoll() end
     return true
 end
 function Inkfolio.visibleMonthly()
@@ -1603,7 +2977,7 @@ function Inkfolio.monthlyItems()
     local record=Inkfolio.visibleMonthly()
     if not record then return {} end
     local first=G_reader_settings:readSetting(S.monthly_rotate)==true and (Inkfolio.monthly.cursor or 1) or 1
-    assert(type(first)=='number' and first>=1 and first<=#record.items and first%3==1,'月榜轮换位置无效')
+    assert(type(first)=='number' and first>=1 and first<=#record.items and first%3==1,L('月榜轮换位置无效'))
     local rows={}
     for i=first,math.min(first+2,#record.items)do rows[#rows+1]=record.items[i] end
     return rows
@@ -1620,7 +2994,8 @@ end
 function Inkfolio.monthlyCheck(continue)
     local state=Inkfolio.monthly
     if not enabled(S.intro) or RUN.sleeping or not networkingEnabled() or RUN.worker
-        or (RUN.active and not continue) or (RUN.cancelled_wake and not RUN.manual and not state.pending)
+        or (RUN.active and not continue) or (Inkfolio.networkHeld('monthly') and not state.pending)
+        or (RUN.transport_broken and not state.pending)
         or not connected() then return false end
     local today=localDate()
     local forced=state.pending==true
@@ -1630,9 +3005,9 @@ function Inkfolio.monthlyCheck(continue)
     if not forced and cached and cached.complete and cached.update_date:sub(1,7)==today:sub(1,7) then return false end
     if state.attempt_day==today and not forced then return false end
     local token=RUN.token
-    if RUN.active then progressStage('正在获取豆瓣月榜') end
+    if RUN.active then progressStage(L('正在获取豆瓣月榜')) end
     state.pending=nil;state.attempt_day=today;state.attempt_at=os.time()
-    state.result='running';state.error='上次月榜任务未完成';Inkfolio.saveMonthly()
+    state.result='running';state.error=L('上次月榜任务未完成');Inkfolio.saveMonthly()
     local category=Inkfolio.monthlyCategory().id
     local collected,seen={},{}
     local function finish(record,reason)
@@ -1647,14 +3022,15 @@ function Inkfolio.monthlyCheck(continue)
                 state.record=record;state.records=state.records or {};state.records[category]=record
             end
             state.result='success';state.error=nil
-        else state.result='failed';state.error=reason or '月榜获取失败' end
-        Inkfolio.saveMonthly();Inkfolio.debugEvent('豆瓣月榜',state.result,state.error)
+        else state.result='failed';state.error=reason or L('月榜获取失败') end
+        Inkfolio.saveMonthly();Inkfolio.debugEvent(L('豆瓣月榜'),state.result,state.error)
         if refreshQuicklook then refreshQuicklook() end
-        if continue then UIManager:nextTick(function()if token==RUN.token then continue()end end) end
+        if continue then UIManager:nextTick(function()if token==RUN.token then continue()end end)
+        elseif startPoll then startPoll() end
     end
     local requestPage
     requestPage=function(page,date)
-        if page>10 then finish(nil,'月榜分页超过安全上限');return true end
+        if page>10 then finish(nil,L('月榜分页超过安全上限'));return true end
         local started=sendHTTP(Inkfolio.monthlyURL(category,date,page),token,function(body,error_text)
             if token~=RUN.token then return end
             local record,reason
@@ -1662,11 +3038,11 @@ function Inkfolio.monthlyCheck(continue)
             if not record then finish(nil,error_text or reason);return end
             -- Until the next issue appears, only check page 1 once per day.
             if page==1 and not forced and cached and cached.complete and cached.url==record.url then finish(cached);return end
-            if collected[1] and collected[1].url~=record.url then finish(nil,'月榜分页月份不一致');return end
+            if collected[1] and collected[1].url~=record.url then finish(nil,L('月榜分页月份不一致'));return end
             for _,item in ipairs(record.items)do
                 local last=collected[#collected] and collected[#collected].items
                 last=last and last[#last]
-                if seen[item.url] or (last and item.rank<=last.rank) then finish(nil,'月榜分页条目重复或排名无效');return end
+                if seen[item.url] or (last and item.rank<=last.rank) then finish(nil,L('月榜分页条目重复或排名无效'));return end
                 seen[item.url]=true
             end
             collected[#collected+1]=record
@@ -1675,11 +3051,11 @@ function Inkfolio.monthlyCheck(continue)
                 local whole=collected[1];local items={}
                 for _,part in ipairs(collected)do for _,item in ipairs(part.items)do items[#items+1]=item end end
                 whole.items=items
-                if not Inkfolio.validMonthly(whole) then finish(nil,'完整月榜校验失败');return end
+                if not Inkfolio.validMonthly(whole) then finish(nil,L('完整月榜校验失败'));return end
                 finish(whole)
             end
         end,'monthly')
-        if not started then finish(nil,RUN.last_error or '月榜请求未启动');return continue~=nil end
+        if not started then finish(nil,RUN.last_error or L('月榜请求未启动'));return continue~=nil end
         return started
     end
     local started=requestPage(1)
@@ -1687,15 +3063,18 @@ function Inkfolio.monthlyCheck(continue)
 end
 function Inkfolio.refreshMonthly()
     if RUN.sleeping or RUN.active or RUN.worker or not networkingEnabled() or not connected() then return false end
+    Inkfolio.resetNetworkPause();RUN.auto_holds.monthly=nil
     Inkfolio.monthly.pending=true
-    return Inkfolio.monthlyCheck()
+    local started=Inkfolio.monthlyCheck()
+    if startPoll then startPoll() end
+    return started
 end
 function Inkfolio.monthlyNote()
     local state=Inkfolio.monthly
-    if RUN.worker and RUN.worker.kind=='monthly' then return '正在更新月榜' end
-    if state.result=='interrupted' then return '月榜更新中断：'..tostring(state.error or '任务未完成') end
-    if state.result=='failed' or state.result=='running' then return '月榜更新失败：'..tostring(state.error or '任务未完成') end
-    if state.record and not Inkfolio.validMonthly(state.record) then return '月榜缓存无效，请重新获取' end
+    if RUN.worker and RUN.worker.kind=='monthly' then return L('正在更新月榜') end
+    if state.result=='interrupted' then return L('月榜更新中断：')..tostring(L(state.error)or L('任务未完成')) end
+    if state.result=='failed' or state.result=='running' then return L('月榜更新失败：')..tostring(L(state.error)or L('任务未完成')) end
+    if state.record and not Inkfolio.validMonthly(state.record) then return L('月榜缓存无效，请重新获取') end
     if not state.record then return networkingEnabled() and '月榜尚未获取' or '联网已关闭，暂无月榜缓存' end
 end
 local function captureResponse(book, stage, url, body)
@@ -1841,42 +3220,42 @@ function Inkfolio.verifyIdentity(book,d)
     if collection and collection.blocked then return nil,collection.blocked end
     local volume;local title_ok=normalize(searchTitle(query))==normalize(searchTitle(d.title))
     if not title_ok and d.original_title then title_ok=normalize(query)==normalize(d.original_title) end
-    if not title_ok and d.subtitle then title_ok=normalize(query)==normalize(d.title..'：'..d.subtitle) end
+    if not title_ok and d.subtitle then title_ok=normalize(query)==normalize(d.title..(Inkfolio.language()=='en_US'and ': 'or '：')..d.subtitle) end
     if collection and normalize(query)==normalize(collection.base) then
         volume=Inkfolio.volumeNumber(d.title,collection.base)
         local count,count_error=Inkfolio.collectionCount(book.title)
         local declared,declared_error=Inkfolio.collectionCount(d.title..' '..d.full_intro)
-        if count_error or declared_error then return nil,'套装册数说明相互冲突，需要用户确认' end
+        if count_error or declared_error then return nil,L('套装册数说明相互冲突，需要用户确认') end
         local author_collection=false
         for _,name in ipairs(authorNames(book.authors))do
             if normalize(collection.base):sub(1,#normalize(name))==normalize(name) then author_collection=true end
         end
         local full_title=normalize(searchTitle(d.title))==normalize(collection.metadata)
         if title_ok or full_title then
-            if collection.first then return nil,'套装无法确认属于文件卷册范围' end
-            if (count and declared~=count) or not full_title and (not declared or declared<2) then return nil,'套装册数或收录范围无法确认' end
+            if collection.first then return nil,L('套装无法确认属于文件卷册范围') end
+            if (count and declared~=count) or not full_title and (not declared or declared<2) then return nil,L('套装册数或收录范围无法确认') end
             title_ok=true
         elseif author_collection then
             title_ok=false
             for _,name in ipairs(book.contents or {})do if normalize(name)==normalize(d.title) then title_ok=true;volume=d.title;break end end
-            if not title_ok then return nil,'作者作品合集缺少可核验的收录目录或结果不在目录中' end
+            if not title_ok then return nil,L('作者作品合集缺少可核验的收录目录或结果不在目录中') end
         elseif volume then
             title_ok=not collection.first or volume>=collection.first and volume<=collection.last
-            if not title_ok then return nil,'分册不在文件卷册范围内' end
+            if not title_ok then return nil,L('分册不在文件卷册范围内') end
         elseif d.series and normalize(d.series)==normalize(collection.base) then
             -- Explicit source series membership; no substring-based membership.
-            if collection.first then return nil,'系列已确认，但分册序号无法确认' end
+            if collection.first then return nil,L('系列已确认，但分册序号无法确认') end
             title_ok=true;volume=d.title
-        else return nil,'结果缺少可核验的套装或系列关系' end
+        else return nil,L('结果缺少可核验的套装或系列关系') end
     end
-    if not title_ok then return nil,'主书名或特定校注版本不一致' end
+    if not title_ok then return nil,L('主书名或特定校注版本不一致') end
     local names=authorNames(book.authors);local isbn=Inkfolio.validISBN(book.isbn) and book.isbn==d.isbn
-    if #names==0 and not isbn then return nil,'缺少可验证的作者或有效ISBN' end
+    if #names==0 and not isbn then return nil,L('缺少可验证的作者或有效ISBN') end
     for _,name in ipairs(names)do
         local n=normalize(name)
-        if not d.contributors[n] and not d.aliases[n] then return nil,'作者或贡献者身份无法确认：需核验详情或别名资料'..(d.alias_error and ('；'..d.alias_error) or '') end
+        if not d.contributors[n] and not d.aliases[n] then return nil,L('作者或贡献者身份无法确认：需核验详情或别名资料')..(d.alias_error and ('；'..d.alias_error) or '') end
     end
-    if volume and #names==0 then return nil,'分册匹配需要明确作者' end
+    if volume and #names==0 then return nil,L('分册匹配需要明确作者') end
     local edition_exact
     if Inkfolio.validISBN(book.isbn) then edition_exact=book.isbn==d.isbn
     else edition_exact=(book.title:find('（',1,true) or book.title:find('(',1,true))~=nil
@@ -1889,7 +3268,7 @@ function Inkfolio.detailRecord(d,proof)
         intro_source=d.intro and d.url or nil,intro_updated_at=d.intro and now or nil,
         identity_version=2,identity_sources=d.sources,matched_title=d.title,
         matched_authors=d.author_text or '',rated_versions=1,
-        rating_sources={{url=d.url,rating=d.rating,via='豆瓣详情页'}},
+        rating_sources={{url=d.url,rating=d.rating,via=L('豆瓣详情页')}},
         volume=proof and proof.volume,collection_scope=proof and proof.collection_scope}
 end
 function Inkfolio.pendingCount()
@@ -1905,7 +3284,7 @@ function Inkfolio.fetchVerifiedBook(book,token,done)
     local moreSearch,fallback_attempted
     local function reject(reason)
         rejections[reason]=(rejections[reason] or 0)+1
-        Inkfolio.debugEvent('身份核验','候选排除',reason)
+        Inkfolio.debugEvent(L('身份核验'),L('候选排除'),reason)
     end
     local function finish()
         if token~=RUN.token then return end
@@ -1927,7 +3306,7 @@ function Inkfolio.fetchVerifiedBook(book,token,done)
                 for _,c in ipairs(verified)do for _,url in ipairs(c.sources or {c.url})do record.identity_sources[#record.identity_sources+1]=url end end
             end
         end
-        local reason=record and record.intro_state=='failed' and target.description=='' and '简介字段获取失败' or nil
+        local reason=record and record.intro_state=='failed' and target.description=='' and L('简介字段获取失败') or nil
         if not record then
             table.sort(review,function(a,b)
                 local x,y=Inkfolio.titleCloseness(query,a.title),Inkfolio.titleCloseness(query,b.title)
@@ -1935,8 +3314,8 @@ function Inkfolio.fetchVerifiedBook(book,token,done)
             end)
             while #review>3 do table.remove(review) end
             local list={};for r,n in pairs(rejections)do list[#list+1]=r..'（'..n..'）' end;table.sort(list)
-            reason=#list>0 and table.concat(list,'；') or '搜索没有返回可读取的图书候选'
-            if #review>0 then reason=reason..'；有'..#review..'个候选待用户确认' end
+            reason=#list>0 and table.concat(list,'；') or L('搜索没有返回可读取的图书候选')
+            if #review>0 then reason=reason..L('；有')..#review..L('个候选待用户确认') end
             local ok,err=Inkfolio.setPending(target,review,reason,query)
             if not ok then reason=reason..'；'..err end
         else
@@ -1962,12 +3341,12 @@ function Inkfolio.fetchVerifiedBook(book,token,done)
                 step()
             end
             if profiles[p.url]~=nil then merge(profiles[p.url] or nil);return end
-            profile_count=profile_count+1;progressStage('正在核验作者身份')
+            profile_count=profile_count+1;progressStage(L('正在核验作者身份'))
             if not sendHTTP(p.url,token,function(body,err)
                 if token~=RUN.token then return end
                 local ok,value=pcall(Inkfolio.profileAliases,body,p.name)
                 profiles[p.url]=not err and ok and value or false
-                if not profiles[p.url] then d.alias_error=err and ('作者资料请求失败：'..err) or '作者资料页面无法核验身份，可能受到访问限制' end
+                if not profiles[p.url] then d.alias_error=err and (L('作者资料请求失败：')..err) or L('作者资料页面无法核验身份，可能受到访问限制') end
                 merge(profiles[p.url] or nil)
             end) then profiles[p.url]=false;merge(nil) end
         end
@@ -1978,7 +3357,7 @@ function Inkfolio.fetchVerifiedBook(book,token,done)
         if token~=RUN.token then return end
         if index>math.min(6,#candidates) then finish();return end
         local c=candidates[index];index=index+1
-        progressStage('正在核验图书详情 '..(index-1)..' / '..math.min(6,#candidates))
+        progressStage(L('正在核验图书详情 ')..(index-1)..' / '..math.min(6,#candidates))
         if not sendHTTP(c.url,token,function(body,err)
             if token~=RUN.token then return end
             local d,parse_error
@@ -1987,13 +3366,13 @@ function Inkfolio.fetchVerifiedBook(book,token,done)
             d.author_text=table.concat(d.author_display,'；')
             examine(d,function(proof,why)
                 if token~=RUN.token then return end
-                if not d.rating then reject(d.rating_error or '详情页没有有效评分')
+                if not d.rating then reject(d.rating_error or L('详情页没有有效评分'))
                 else
                     local proposal=Inkfolio.detailRecord(d,proof)
                     proposal.title=d.title;proposal.authors=d.author_text;proposal.version_note=d.subtitle or '';proposal.reason=why
                     review[#review+1]=proposal
                     if chosen then
-                        if normalize(chosen.title)~=normalize(d.title) or chosen.authors~=d.author_text then reject('已确认条目的书名或作者发生变化，需要重新确认')
+                        if normalize(chosen.title)~=normalize(d.title) or chosen.authors~=d.author_text then reject(L('已确认条目的书名或作者发生变化，需要重新确认'))
                         else
                             proposal.user_confirmed=true;proposal.confirmed_at=chosen.at;proposal.search_query=query
                             done(proposal,proposal.intro_state=='failed' and d.rating_error or nil);return
@@ -2001,11 +3380,11 @@ function Inkfolio.fetchVerifiedBook(book,token,done)
                     elseif proof and not book.force_review then
                         verified[#verified+1]={id=c.id,url=c.url,title=d.title,rating=d.rating,intro=d.intro,intro_state=d.intro_state,edition_exact=proof.edition_exact,
                             relevance=10,checked_detail=true,volume=proof.volume,collection_scope=proof.collection_scope,sources=d.sources}
-                    else reject(why or '用户重新检索，等待确认') end
+                    else reject(why or L('用户重新检索，等待确认')) end
                 end
                 UIManager:scheduleIn(.7,details)
             end)
-        end) then reject(RUN.last_error or '详情请求未启动');finish() end
+        end) then reject(RUN.last_error or L('详情请求未启动'));finish() end
     end
     if chosen then candidates={{id=chosen.url:match('/subject/(%d+)/'),url=chosen.url,title=chosen.title}};details();return end
     local function add(body,kind)
@@ -2029,26 +3408,26 @@ function Inkfolio.fetchVerifiedBook(book,token,done)
     end
     moreSearch=function()
         fallback_attempted=true;candidates={};index=1
-        progressStage('正在补充搜索图书（Bing）')
+        progressStage(L('正在补充搜索图书（Bing）'))
         if not sendHTTP('https://www.bing.com/search?format=rss&q='..socket_url.escape(query..' site:book.douban.com/subject/'),token,function(xml,err)
             if token~=RUN.token then return end
             if err then reject(err) else add(xml,'bing') end
             rankAndRead()
-        end) then reject(RUN.last_error or '补充搜索请求未启动');finish() end
+        end) then reject(RUN.last_error or L('补充搜索请求未启动'));finish() end
     end
-    progressStage('正在搜索图书（豆瓣）')
+    progressStage(L('正在搜索图书（豆瓣）'))
     if not sendHTTP('https://www.douban.com/search?cat=1001&q='..socket_url.escape(query),token,function(body,err)
         if token~=RUN.token then return end
         if err then reject(err) else add(body,'douban') end
         if #candidates>0 then rankAndRead();return end
         fallback_attempted=true
-        progressStage('正在搜索图书（Bing）')
+        progressStage(L('正在搜索图书（Bing）'))
         if not sendHTTP('https://www.bing.com/search?format=rss&q='..socket_url.escape(query..' site:book.douban.com/subject/'),token,function(xml,error_text)
             if token~=RUN.token then return end
             if error_text then reject(error_text) else add(xml,'bing') end
             rankAndRead()
-        end) then reject(RUN.last_error or '搜索请求未启动');finish() end
-    end) then reject(RUN.last_error or '搜索请求未启动');finish() end
+        end) then reject(RUN.last_error or L('搜索请求未启动'));finish() end
+    end) then reject(RUN.last_error or L('搜索请求未启动'));finish() end
 end
 function Inkfolio.finalizeVerifiedVolumes(candidates)
     return Inkfolio.finalizeVolumes(candidates,true)
@@ -2079,7 +3458,7 @@ local function collectPaths()
     local function walk(dir, depth)
         if depth > 24 then
             failed=true
-            RUN.last_error='书库目录层级超过24层，扫描未完成：'..dir
+            RUN.last_error=L('书库目录层级超过24层，扫描未完成：')..dir
             logger.warn('InkFolio:',RUN.last_error)
             return
         end
@@ -2087,7 +3466,7 @@ local function collectPaths()
         if not ok or not iter then
             logger.warn('READ RECEIPT: cannot scan directory', dir)
             failed = true
-            RUN.last_error='无法读取书库目录：'..dir
+            RUN.last_error=L('无法读取书库目录：')..dir
             return
         end
         for filename in iter, state do
@@ -2096,7 +3475,7 @@ local function collectPaths()
                 local mode = lfs.symlinkattributes(path, 'mode')
                 if not mode then
                     failed=true
-                    RUN.last_error='无法读取书库文件属性：'..path
+                    RUN.last_error=L('无法读取书库文件属性：')..path
                     logger.warn('InkFolio:',RUN.last_error)
                 elseif mode == 'directory' and not SKIP_DIR[filename:lower()] and
                    not filename:lower():match('%.sdr$') then
@@ -2111,7 +3490,7 @@ local function collectPaths()
     local ok,reason=pcall(walk,root,0)
     if not ok then
         failed=true
-        RUN.last_error='书库扫描失败：'..tostring(reason)
+        RUN.last_error=L('书库扫描失败：')..tostring(reason)
         logger.warn('InkFolio:',RUN.last_error)
     end
     if failed then return nil end
@@ -2188,11 +3567,14 @@ local function getBookFromFile(path)
 end
 local function abortRound(user_cancel)
     if RUN.info_task then
-        Inkfolio.infoResult(RUN.info_task.kind,RUN.info_task.key,user_cancel and 'cancelled' or 'interrupted',not user_cancel and (RUN.sleeping and '休眠中，任务已中断' or not networkingEnabled() and '联网已关闭' or not connected() and '网络未连接' or '任务已中断') or nil)
+        Inkfolio.infoResult(RUN.info_task.kind,RUN.info_task.key,user_cancel and 'cancelled' or 'interrupted',not user_cancel and (RUN.sleeping and L('休眠中，任务已中断') or not networkingEnabled() and L('联网已关闭') or not connected() and L('网络未连接') or L('任务已中断')) or nil)
     elseif user_cancel and RUN.active then Inkfolio.infoCancelled() end
-    stopHTTP(user_cancel and '用户取消本轮获取' or nil)
+    local cancelled_kind=RUN.worker and RUN.worker.kind or (RUN.active and 'books' or nil)
+    if cancelled_kind~='weather' and cancelled_kind~='monthly' then cancelled_kind='books' end
+    stopHTTP(user_cancel and L('用户取消本轮获取') or nil)
     if user_cancel then
-        RUN.cancelled_wake=true
+        RUN.auto_holds[cancelled_kind]=true
+        RUN.cancelled_wake=RUN.auto_holds.books==true
         DAILY_DONE=false
         saveData()
     elseif RUN.active and RUN.started and not RUN.manual and not RUN.new_books then
@@ -2202,7 +3584,7 @@ local function abortRound(user_cancel)
     RUN.token = RUN.token + 1
     RUN.active, RUN.started, RUN.manual = false, false, false
     RUN.queue = {}
-    progressEnd(user_cancel and '已取消获取，已保存的图书信息保留。' or '获取已中断。',RUN.sleeping)
+    progressEnd(user_cancel and L('已取消获取，已保存的图书信息保留。') or L('获取已中断。'),RUN.sleeping)
     if startPoll then startPoll() end
 end
 cancelFetch=function() abortRound(true) end
@@ -2210,10 +3592,11 @@ local function finishRound()
     local processed = RUN.processed
     RUN.active, RUN.manual, RUN.started = false, false, false
     RUN.queue = {}
-    local text=string.format('获取结束：已处理 %d / %d 本，更新 %d 本，未完整获取 %d 本。',
+    local text=string.format(L('获取结束：已处理 %d / %d 本，更新 %d 本，未完整获取 %d 本。'),
         RUN.done or 0,RUN.total or 0,processed,RUN.failed)
     local reason=RUN.last_error or RUN.last_book_error
-    if reason then text=text..'\n最近失败原因：'..tostring(reason):sub(1,140) end
+    if RUN.weather_result then text=text..'\n'..RUN.weather_result end
+    if reason then text=text..L('\n最近失败原因：')..tostring(reason):sub(1,140) end
     local manual=RUN.review_after_round
     RUN.review_after_round=nil
     progressEnd(text)
@@ -2222,12 +3605,14 @@ local function finishRound()
 end
 local function nextItem()
     if not RUN.active then return end
-    if RUN.transport_broken then finishRound(); return end
     if RUN.sleeping or not networkingEnabled() or not connected() then
         abortRound(); return
     end
-    if Inkfolio.monthlyCheck(nextItem) then return end
-    while not RUN.current_only and RUN.index <= #RUN.queue and not Inkfolio.needsFetch(RUN.queue[RUN.index]) do
+    if weatherCheck(true) then return end
+    if RUN.transport_broken then finishRound(); return end
+    if Inkfolio.monthlyCheck(nextItem)then return end
+    while not RUN.current_only and RUN.index <= #RUN.queue and
+        (not Inkfolio.needsFetch(RUN.queue[RUN.index]) or (not RUN.manual and (Inkfolio.bookDeadline(RUN.queue[RUN.index]) or math.huge)>os.time())) do
         Inkfolio.infoResult('books',bookKey(RUN.queue[RUN.index]),'cached')
         finishNewPaths(RUN.queue[RUN.index], true)
         RUN.done=RUN.done+1;PROGRESS.done=RUN.done
@@ -2239,13 +3624,14 @@ local function nextItem()
     local token = RUN.token
     PROGRESS.book=book.title
     Inkfolio.infoAttempt('books',bookKey(book))
+    Inkfolio.bookAttempt(book,RUN.manual)
     fetchBook(book, token, function(record, reason)
         if token ~= RUN.token or not RUN.active then return end
-        if record and (not tonumber(record.rating) or tonumber(record.rating)<=0 or tonumber(record.rating)>10 or not validURL(record.url)) then record=nil;reason='获取结果缺少有效评分或链接' end
+        if record and (not tonumber(record.rating) or tonumber(record.rating)<=0 or tonumber(record.rating)>10 or not validURL(record.url)) then record=nil;reason=L('获取结果缺少有效评分或链接') end
         if reason or not record then
-            reason=reason or '未找到匹配且有评分的图书'
+            reason=reason or L('未找到匹配且有评分的图书')
             RUN.failed = RUN.failed + 1
-            RUN.last_book_error = reason or '未找到匹配且有评分的图书'
+            RUN.last_book_error = reason or L('未找到匹配且有评分的图书')
             logger.warn('READ RECEIPT book incomplete:', book.title, RUN.last_book_error)
         end
         if record and record.rating and validURL(record.url) then
@@ -2264,29 +3650,31 @@ local function nextItem()
         local pending=Inkfolio.matchState.pending[Inkfolio.fileMatchKey(book)]
         Inkfolio.infoResult('books',bookKey(book),record and (reason and 'partial' or 'success') or pending and #pending.candidates>0 and 'pending' or 'failed',reason)
         finishNewPaths(book, completed(book))
+        Inkfolio.bookFinished(book)
         RUN.done=RUN.done+1;PROGRESS.done=RUN.done
         UIManager:scheduleIn(0.8, nextItem)
     end)
 end
-local function beginRound(manual, priority, new_paths, current_only)
+local function beginRound(manual, priority, new_paths, current_only, queued_books)
     resetDay()
     if RUN.active or RUN.worker or RUN.sleeping or not networkingEnabled() or not connected() then return false end
     if current_only and (not manual or not priority or priority.title == '') then return false end
-    if not current_only and not new_paths and not rootPath() then
+    if not current_only and not new_paths and not queued_books and not rootPath() then
         if manual or not RUN.directory_error_shown then
             UIManager:show(require('ui/widget/infomessage'):new{
-                text='书库目录不可用，请在“InkFolio → 联网设置 → 书库目录”选择可读取的文件夹。没有发起联网请求。'})
+                text=L('书库目录不可用，请在“InkFolio → 联网设置 → 书库目录”选择可读取的文件夹。没有发起联网请求。')})
             RUN.directory_error_shown=true
         end
         return false
     end
     RUN.directory_error_shown=false
-    if not manual and (RUN.cancelled_wake or RUN.transport_broken or
-       (not new_paths and ROUNDS >= MAX_AUTO)) then return false end
+    if not manual and (Inkfolio.networkHeld('books') or RUN.transport_broken) then return false end
     if manual then RUN.transport_broken = false; RUN.network_failures = 0 end
     RUN.active = true
     -- A manual request does not release the automatic hold for this wake.
     store:flush()
+    if manual then RUN.auto_holds.weather=nil;WEATHER.pending=Inkfolio.weatherEnabled() and selectedWeatherCity()~=nil end
+    RUN.weather_result=nil
     RUN.done,RUN.total=0,0
     progressBegin(manual)
     RUN.manual = manual
@@ -2304,12 +3692,12 @@ local function beginRound(manual, priority, new_paths, current_only)
     local token = RUN.token
     UIManager:scheduleIn(0.05,function()
         if token~=RUN.token or not RUN.active then return end
-        local filepaths = current_only and {} or new_paths or collectPaths()
+        local filepaths = (current_only or queued_books) and {} or new_paths or collectPaths()
         if not filepaths then
             finishRound()
             if manual then
                 local InfoMessage = require('ui/widget/infomessage')
-                UIManager:show(InfoMessage:new{ text = '书库目录不可用，请在“InkFolio → 联网设置 → 书库目录”选择可读取的文件夹。没有发起联网请求。' })
+                UIManager:show(InfoMessage:new{ text = L('书库目录不可用，请在“InkFolio → 联网设置 → 书库目录”选择可读取的文件夹。没有发起联网请求。') })
             end
             return false
         end
@@ -2329,7 +3717,8 @@ local function beginRound(manual, priority, new_paths, current_only)
                     LIBRARY.pending[path]=localDate()
                 end
             end
-            if book and book.title ~= '' and (current_only or Inkfolio.needsFetch(book)) then
+            if book and book.title ~= '' and (current_only or Inkfolio.needsFetch(book))
+                and (manual or (Inkfolio.bookDeadline(book) or math.huge)<=os.time()) then
                 local key = bookKey(book)
                 if not seen[key] then
                     seen[key] = true
@@ -2338,7 +3727,8 @@ local function beginRound(manual, priority, new_paths, current_only)
             end
         end
         -- Prioritize currently opened book without opening the same document twice.
-        if not new_paths then add(priority or currentBook()) end
+        if queued_books then for _,book in ipairs(queued_books)do add(book,book.path)end
+        elseif not new_paths then add(priority or currentBook()) end
         local idx = 1
         local function scanStep()
             if token ~= RUN.token or not RUN.active then return end
@@ -2363,90 +3753,866 @@ local function beginRound(manual, priority, new_paths, current_only)
     return true
 end
 
-local function newBooksCheck(force)
-    if RUN.sleeping or RUN.active or RUN.worker or not networkingEnabled() or
-       RUN.cancelled_wake or RUN.transport_broken then return false end
-    if not force and LIBRARY.known and not connected() then return false end
-    if not force and os.time()<nextLibraryScan then return false end
-    nextLibraryScan=os.time()+180
-    local paths=collectPaths()
-    if not paths then return false end
-    observePaths(paths)
-    local added={}
-    for _,path in ipairs(paths) do
-        if LIBRARY.pending[path] and LIBRARY.pending[path]~=localDate() then
-            added[#added+1]=path
+selectedWeatherCity=function()
+    local code=G_reader_settings:readSetting(S.weather_city)
+    if code==nil then code='lqYjK' end
+    if not code then return nil end
+    for _,region in ipairs(WEATHER_REGIONS) do
+        for _,city in ipairs(region.cities) do
+            if city.code~='' and city.code==code then return city end
         end
     end
-    if #added>0 and connected() then return beginRound(false,nil,added) end
-    return false
 end
-dailyCheck=function(force_scan)
+-- Cover weather is exclusive; the other skins retain their two-day choices.
+function Inkfolio.coverWeather()
+    local choice=G_reader_settings:readSetting(S.cover_weather)
+    if choice==nil then
+        if enabled(S.weather)then return 'today' end
+        return G_reader_settings:readSetting(S.weather_tomorrow)==true and 'tomorrow'or 'off'
+    end
+    assert(choice=='today'or choice=='tomorrow'or choice=='off',L('InkFolio: 封面天气选项无效'))
+    return choice
+end
+function Inkfolio.weatherSelected(offset,appearance)
+    assert(offset==0 or offset==1,L('InkFolio: 无效天气日期'))
+    if Inkfolio.isCardStyle(appearance)then
+        return Inkfolio.coverWeather()==(offset==0 and 'today'or 'tomorrow')
+    end
+    return offset==0 and enabled(S.weather) or offset==1 and G_reader_settings:readSetting(S.weather_tomorrow)==true
+end
+function Inkfolio.weatherEnabled(appearance)
+    return Inkfolio.weatherSelected(0,appearance) or Inkfolio.weatherSelected(1,appearance)
+end
+function Inkfolio.weatherDate(offset,day)
+    local year,month,date=(day or localDate()):match('^(%d%d%d%d)%-(%d%d)%-(%d%d)$')
+    assert(year,L('InkFolio: 无效天气日期'))
+    -- Calendar arithmetic at noon handles month/year changes and local DST.
+    return os.date('%Y-%m-%d',os.time{year=tonumber(year),month=tonumber(month),day=tonumber(date)+offset,hour=12})
+end
+function Inkfolio.cachedWeather(record,date,day)
+    if not record or record.day~=(day or localDate()) then return nil end
+    if record.forecasts then
+        assert(type(record.forecasts)=='table',L('InkFolio: 天气预报缓存结构损坏'))
+        return record.forecasts[date]
+    end
+    -- Read a valid pre-two-day cache without rewriting or discarding it.
+    if date==record.day then return record.text end
+end
+function Inkfolio.weatherDeadline(now)
+    if not Inkfolio.weatherEnabled() or not selectedWeatherCity() or Inkfolio.networkHeld('weather') then return nil end
+    now=now or os.time()
+    if WEATHER.pending==true then return now end
+    local city=selectedWeatherCity();local day=os.date('%Y-%m-%d',now)
+    local record=WEATHER.records[city.code]
+    if WEATHER.attempt_city==city.code and WEATHER.attempt_day==day and WEATHER.next_at then
+        return math.max(now,math.min(WEATHER.next_at,Inkfolio.nextDay(now)))
+    end
+    if record and record.day==day and record.updated_at then
+        local complete=true
+        for offset=0,1 do
+            if Inkfolio.weatherSelected(offset) and not Inkfolio.cachedWeather(record,Inkfolio.weatherDate(offset,day),day) then complete=false end
+        end
+        if complete then return math.max(now,math.min(record.updated_at+Inkfolio.NET_RULES.weather_age,Inkfolio.nextDay(now))) end
+    end
+    if WEATHER.attempt_city==city.code and WEATHER.attempt_day==day then return Inkfolio.nextDay(now) end
+    return now
+end
+local function weatherPending()
+    local due=Inkfolio.weatherDeadline()
+    return due~=nil and due<=os.time()
+end
+local function validTemperature(value)
+    local n=tonumber(value)
+    if n and n>=-90 and n<=65 then return n end
+end
+local function parseWeather(body,code,day)
+    local ok,response=pcall(function() return require('rapidjson').decode(body) end)
+    if not ok or type(response)~='table' then return nil,L('天气数据JSON无法解析') end
+    if response.code~=0 or type(response.data)~='table' then return nil,L('天气数据接口返回异常') end
+    local data=response.data
+    local forecast=data.predict
+    if type(forecast)~='table' or type(forecast.station)~='table' or forecast.station.code~=code then return nil,L('天气数据城市不匹配或缺失') end
+    local entry
+    for _,item in ipairs(type(forecast.detail)=='table' and forecast.detail or {}) do
+        if type(item)=='table' and item.date==day then entry=item;break end
+    end
+    if not entry then return nil,L('天气数据缺少请求日期的预报') end
+    local dw=type(entry.day)=='table' and entry.day.weather or nil
+    local nw=type(entry.night)=='table' and entry.night.weather or nil
+    dw=type(dw)=='table' and dw or {}; nw=type(nw)=='table' and nw or {}
+    local high,low=validTemperature(dw.temperature),validTemperature(nw.temperature)
+    -- The official daily chart supplies both extrema when the daytime forecast has expired.
+    if not high or not low then
+        for _,item in ipairs(type(data.tempchart)=='table' and data.tempchart or {}) do
+            if type(item)=='table' and type(item.time)=='string' and item.time:gsub('/','-')==day then
+                high,low=validTemperature(item.max_temp),validTemperature(item.min_temp)
+                break
+            end
+        end
+    end
+    if not high or not low or high<low then return nil,L('天气数据温度范围无效或缺失') end
+    local info=dw.info
+    if not info or info=='' or info=='9999' then info=nw.info end
+    if type(info)~='string' or info=='' or info=='9999' then return nil,L('天气数据状态无效或缺失') end
+    if info=='阴' then info='阴天' end
+    return info..' '..string.format('%.0f～%.0f°C',low,high)
+end
+Inkfolio.LOCATION_NAMES={
+    ["北京市"]="Beijing",
+    ["天津市"]="Tianjin",
+    ["河北省"]="Hebei",
+    ["石家庄市"]="Shijiazhuang",
+    ["唐山市"]="Tangshan",
+    ["秦皇岛市"]="Qinhuangdao",
+    ["邯郸市"]="Handan",
+    ["邢台市"]="Xingtai",
+    ["保定市"]="Baoding",
+    ["张家口市"]="Zhangjiakou",
+    ["承德市"]="Chengde",
+    ["沧州市"]="Cangzhou",
+    ["廊坊市"]="Langfang",
+    ["衡水市"]="Hengshui",
+    ["山西省"]="Shanxi",
+    ["太原市"]="Taiyuan",
+    ["大同市"]="Datong",
+    ["阳泉市"]="Yangquan",
+    ["长治市"]="Changzhi",
+    ["晋城市"]="Jincheng",
+    ["朔州市"]="Shuozhou",
+    ["晋中市"]="Jinzhong",
+    ["运城市"]="Yuncheng",
+    ["忻州市"]="Xinzhou",
+    ["临汾市"]="Linfen",
+    ["吕梁市"]="Lüliang",
+    ["内蒙古自治区"]="Inner Mongolia",
+    ["呼和浩特市"]="Hohhot",
+    ["包头市"]="Baotou",
+    ["乌海市"]="Wuhai",
+    ["赤峰市"]="Chifeng",
+    ["通辽市"]="Tongliao",
+    ["鄂尔多斯市"]="Ordos",
+    ["呼伦贝尔市"]="Hulunbuir",
+    ["巴彦淖尔市"]="Bayannur",
+    ["乌兰察布市"]="Ulanqab",
+    ["兴安盟"]="Hinggan League",
+    ["锡林郭勒盟"]="Xilingol League",
+    ["阿拉善盟"]="Alxa League",
+    ["辽宁省"]="Liaoning",
+    ["沈阳市"]="Shenyang",
+    ["大连市"]="Dalian",
+    ["鞍山市"]="Anshan",
+    ["抚顺市"]="Fushun",
+    ["本溪市"]="Benxi",
+    ["丹东市"]="Dandong",
+    ["锦州市"]="Jinzhou",
+    ["营口市"]="Yingkou",
+    ["阜新市"]="Fuxin",
+    ["辽阳市"]="Liaoyang",
+    ["盘锦市"]="Panjin",
+    ["铁岭市"]="Tieling",
+    ["朝阳市"]="Chaoyang",
+    ["葫芦岛市"]="Huludao",
+    ["吉林省"]="Jilin",
+    ["长春市"]="Changchun",
+    ["吉林市"]="Jilin",
+    ["四平市"]="Siping",
+    ["辽源市"]="Liaoyuan",
+    ["通化市"]="Tonghua",
+    ["白山市"]="Baishan",
+    ["松原市"]="Songyuan",
+    ["白城市"]="Baicheng",
+    ["延边朝鲜族自治州"]="Yanbian Korean Autonomous Prefecture",
+    ["黑龙江省"]="Heilongjiang",
+    ["哈尔滨市"]="Haerbin",
+    ["齐齐哈尔市"]="Qiqihaer",
+    ["鸡西市"]="Jixi",
+    ["鹤岗市"]="Hegang",
+    ["双鸭山市"]="Shuangyashan",
+    ["大庆市"]="Daqing",
+    ["伊春市"]="Yichun",
+    ["佳木斯市"]="Jiamusi",
+    ["七台河市"]="Qitaihe",
+    ["牡丹江市"]="Mudanjiang",
+    ["黑河市"]="Heihe",
+    ["绥化市"]="Suihua",
+    ["大兴安岭地区"]="Daxing'anling Prefecture",
+    ["上海市"]="Shanghai",
+    ["江苏省"]="Jiangsu",
+    ["南京市"]="Nanjing",
+    ["无锡市"]="Wuxi",
+    ["徐州市"]="Xuzhou",
+    ["常州市"]="Changzhou",
+    ["苏州市"]="Suzhou",
+    ["南通市"]="Nantong",
+    ["连云港市"]="Lianyungang",
+    ["淮安市"]="Huai'an",
+    ["盐城市"]="Yancheng",
+    ["扬州市"]="Yangzhou",
+    ["镇江市"]="Zhenjiang",
+    ["泰州市"]="Taizhou",
+    ["宿迁市"]="Suqian",
+    ["浙江省"]="Zhejiang",
+    ["杭州市"]="Hangzhou",
+    ["宁波市"]="Ningbo",
+    ["温州市"]="Wenzhou",
+    ["嘉兴市"]="Jiaxing",
+    ["湖州市"]="Huzhou",
+    ["绍兴市"]="Shaoxing",
+    ["金华市"]="Jinhua",
+    ["衢州市"]="Quzhou",
+    ["舟山市"]="Zhoushan",
+    ["台州市"]="Taizhou",
+    ["丽水市"]="Lishui",
+    ["安徽省"]="Anhui",
+    ["合肥市"]="Hefei",
+    ["芜湖市"]="Wuhu",
+    ["蚌埠市"]="Bengbu",
+    ["淮南市"]="Huainan",
+    ["马鞍山市"]="Ma'anshan",
+    ["淮北市"]="Huaibei",
+    ["铜陵市"]="Tongling",
+    ["安庆市"]="Anqing",
+    ["黄山市"]="Huangshan",
+    ["滁州市"]="Chuzhou",
+    ["阜阳市"]="Fuyang",
+    ["宿州市"]="Suzhou",
+    ["六安市"]="Lu'an",
+    ["亳州市"]="Bozhou",
+    ["池州市"]="Chizhou",
+    ["宣城市"]="Xuancheng",
+    ["福建省"]="Fujian",
+    ["福州市"]="Fuzhou",
+    ["厦门市"]="Xiamen",
+    ["莆田市"]="Putian",
+    ["三明市"]="Sanming",
+    ["泉州市"]="Quanzhou",
+    ["漳州市"]="Zhangzhou",
+    ["南平市"]="Nanping",
+    ["龙岩市"]="Longyan",
+    ["宁德市"]="Ningde",
+    ["江西省"]="Jiangxi",
+    ["南昌市"]="Nanchang",
+    ["景德镇市"]="Jingdezhen",
+    ["萍乡市"]="Pingxiang",
+    ["九江市"]="Jiujiang",
+    ["新余市"]="Xinyu",
+    ["鹰潭市"]="Yingtan",
+    ["赣州市"]="Ganzhou",
+    ["吉安市"]="Ji'an",
+    ["宜春市"]="Yichun",
+    ["抚州市"]="Fuzhou",
+    ["上饶市"]="Shangrao",
+    ["山东省"]="Shandong",
+    ["济南市"]="Jinan",
+    ["青岛市"]="Qingdao",
+    ["淄博市"]="Zibo",
+    ["枣庄市"]="Zaozhuang",
+    ["东营市"]="Dongying",
+    ["烟台市"]="Yantai",
+    ["潍坊市"]="Weifang",
+    ["济宁市"]="Jining",
+    ["泰安市"]="Tai'an",
+    ["威海市"]="Weihai",
+    ["日照市"]="Rizhao",
+    ["临沂市"]="Linyi",
+    ["德州市"]="Dezhou",
+    ["聊城市"]="Liaocheng",
+    ["滨州市"]="Binzhou",
+    ["菏泽市"]="Heze",
+    ["河南省"]="Henan",
+    ["郑州市"]="Zhengzhou",
+    ["开封市"]="Kaifeng",
+    ["洛阳市"]="Luoyang",
+    ["平顶山市"]="Pingdingshan",
+    ["安阳市"]="Anyang",
+    ["鹤壁市"]="Hebi",
+    ["新乡市"]="Xinxiang",
+    ["焦作市"]="Jiaozuo",
+    ["濮阳市"]="Puyang",
+    ["许昌市"]="Xuchang",
+    ["漯河市"]="Luohe",
+    ["三门峡市"]="Sanmenxia",
+    ["南阳市"]="Nanyang",
+    ["商丘市"]="Shangqiu",
+    ["信阳市"]="Xinyang",
+    ["周口市"]="Zhoukou",
+    ["驻马店市"]="Zhumadian",
+    ["湖北省"]="Hubei",
+    ["武汉市"]="Wuhan",
+    ["黄石市"]="Huangshi",
+    ["十堰市"]="Shiyan",
+    ["宜昌市"]="Yichang",
+    ["襄阳市"]="Xiangyang",
+    ["鄂州市"]="Ezhou",
+    ["荆门市"]="Jingmen",
+    ["孝感市"]="Xiaogan",
+    ["荆州市"]="Jingzhou",
+    ["黄冈市"]="Huanggang",
+    ["咸宁市"]="Xianning",
+    ["随州市"]="Suizhou",
+    ["恩施土家族苗族自治州"]="Enshi Tujia and Miao Autonomous Prefecture",
+    ["湖南省"]="Hunan",
+    ["长沙市"]="Changsha",
+    ["株洲市"]="Zhuzhou",
+    ["湘潭市"]="Xiangtan",
+    ["衡阳市"]="Hengyang",
+    ["邵阳市"]="Shaoyang",
+    ["岳阳市"]="Yueyang",
+    ["常德市"]="Changde",
+    ["张家界市"]="Zhangjiajie",
+    ["益阳市"]="Yiyang",
+    ["郴州市"]="Chenzhou",
+    ["永州市"]="Yongzhou",
+    ["怀化市"]="Huaihua",
+    ["娄底市"]="Loudi",
+    ["湘西土家族苗族自治州"]="Xiangxi Tujia and Miao Autonomous Prefecture",
+    ["广东省"]="Guangdong",
+    ["广州市"]="Guangzhou",
+    ["韶关市"]="Shaoguan",
+    ["深圳市"]="Shenzhen",
+    ["珠海市"]="Zhuhai",
+    ["汕头市"]="Shantou",
+    ["佛山市"]="Foshan",
+    ["江门市"]="Jiangmen",
+    ["湛江市"]="Zhanjiang",
+    ["茂名市"]="Maoming",
+    ["肇庆市"]="Zhaoqing",
+    ["惠州市"]="Huizhou",
+    ["梅州市"]="Meizhou",
+    ["汕尾市"]="Shanwei",
+    ["河源市"]="Heyuan",
+    ["阳江市"]="Yangjiang",
+    ["清远市"]="Qingyuan",
+    ["东莞市"]="Dongguan",
+    ["中山市"]="Zhongshan",
+    ["潮州市"]="Chaozhou",
+    ["揭阳市"]="Jieyang",
+    ["云浮市"]="Yunfu",
+    ["广西壮族自治区"]="Guangxi",
+    ["南宁市"]="Nanning",
+    ["柳州市"]="Liuzhou",
+    ["桂林市"]="Guilin",
+    ["梧州市"]="Wuzhou",
+    ["北海市"]="Beihai",
+    ["防城港市"]="Fangchenggang",
+    ["钦州市"]="Qinzhou",
+    ["贵港市"]="Guigang",
+    ["玉林市"]="Yulin",
+    ["百色市"]="Baise",
+    ["贺州市"]="Hezhou",
+    ["河池市"]="Hechi",
+    ["来宾市"]="Laibin",
+    ["崇左市"]="Chongzuo",
+    ["海南省"]="Hainan",
+    ["海口市"]="Haikou",
+    ["三亚市"]="Sanya",
+    ["三沙市"]="Sansha",
+    ["儋州市"]="Danzhou",
+    ["重庆市"]="Chongqing",
+    ["四川省"]="Sichuan",
+    ["成都市"]="Chengdu",
+    ["自贡市"]="Zigong",
+    ["攀枝花市"]="Panzhihua",
+    ["泸州市"]="Luzhou",
+    ["德阳市"]="Deyang",
+    ["绵阳市"]="Mianyang",
+    ["广元市"]="Guangyuan",
+    ["遂宁市"]="Suining",
+    ["内江市"]="Neijiang",
+    ["乐山市"]="Leshan",
+    ["南充市"]="Nanchong",
+    ["眉山市"]="Meishan",
+    ["宜宾市"]="Yibin",
+    ["广安市"]="Guang'an",
+    ["达州市"]="Dazhou",
+    ["雅安市"]="Ya'an",
+    ["巴中市"]="Bazhong",
+    ["资阳市"]="Ziyang",
+    ["阿坝藏族羌族自治州"]="Ngawa Tibetan and Qiang Autonomous Prefecture",
+    ["甘孜藏族自治州"]="Garze Tibetan Autonomous Prefecture",
+    ["凉山彝族自治州"]="Liangshan Yi Autonomous Prefecture",
+    ["贵州省"]="Guizhou",
+    ["贵阳市"]="Guiyang",
+    ["六盘水市"]="Liupanshui",
+    ["遵义市"]="Zunyi",
+    ["安顺市"]="Anshun",
+    ["毕节市"]="Bijie",
+    ["铜仁市"]="Tongren",
+    ["黔西南布依族苗族自治州"]="Qianxinan Bouyei and Miao Autonomous Prefecture",
+    ["黔东南苗族侗族自治州"]="Qiandongnan Miao and Dong Autonomous Prefecture",
+    ["黔南布依族苗族自治州"]="Qiannan Bouyei and Miao Autonomous Prefecture",
+    ["云南省"]="Yunnan",
+    ["昆明市"]="Kunming",
+    ["曲靖市"]="Qujing",
+    ["玉溪市"]="Yuxi",
+    ["保山市"]="Baoshan",
+    ["昭通市"]="Zhaotong",
+    ["丽江市"]="Lijiang",
+    ["普洱市"]="Pu'er",
+    ["临沧市"]="Lincang",
+    ["楚雄彝族自治州"]="Chuxiong Yi Autonomous Prefecture",
+    ["红河哈尼族彝族自治州"]="Honghe Hani and Yi Autonomous Prefecture",
+    ["文山壮族苗族自治州"]="Wenshan Zhuang and Miao Autonomous Prefecture",
+    ["西双版纳傣族自治州"]="Xishuangbanna Dai Autonomous Prefecture",
+    ["大理白族自治州"]="Dali Bai Autonomous Prefecture",
+    ["德宏傣族景颇族自治州"]="Dehong Dai and Jingpo Autonomous Prefecture",
+    ["怒江傈僳族自治州"]="Nujiang Lisu Autonomous Prefecture",
+    ["迪庆藏族自治州"]="Diqing Tibetan Autonomous Prefecture",
+    ["西藏自治区"]="Tibet",
+    ["拉萨市"]="Lhasa",
+    ["日喀则市"]="Shigatse",
+    ["昌都市"]="Chamdo",
+    ["林芝市"]="Nyingchi",
+    ["山南市"]="Shannan",
+    ["那曲市"]="Nagqu",
+    ["阿里地区"]="Ngari Prefecture",
+    ["陕西省"]="Shaanxi",
+    ["西安市"]="Xi'an",
+    ["铜川市"]="Tongchuan",
+    ["宝鸡市"]="Baoji",
+    ["咸阳市"]="Xianyang",
+    ["渭南市"]="Weinan",
+    ["延安市"]="Yan'an",
+    ["汉中市"]="Hanzhong",
+    ["榆林市"]="Yulin",
+    ["安康市"]="Ankang",
+    ["商洛市"]="Shangluo",
+    ["甘肃省"]="Gansu",
+    ["兰州市"]="Lanzhou",
+    ["嘉峪关市"]="Jiayuguan",
+    ["金昌市"]="Jinchang",
+    ["白银市"]="Baiyin",
+    ["天水市"]="Tianshui",
+    ["武威市"]="Wuwei",
+    ["张掖市"]="Zhangye",
+    ["平凉市"]="Pingliang",
+    ["酒泉市"]="Jiuquan",
+    ["庆阳市"]="Qingyang",
+    ["定西市"]="Dingxi",
+    ["陇南市"]="Longnan",
+    ["临夏回族自治州"]="Linxia Hui Autonomous Prefecture",
+    ["甘南藏族自治州"]="Gannan Tibetan Autonomous Prefecture",
+    ["青海省"]="Qinghai",
+    ["西宁市"]="Xining",
+    ["海东市"]="Haidong",
+    ["海北藏族自治州"]="Haibei Tibetan Autonomous Prefecture",
+    ["黄南藏族自治州"]="Huangnan Tibetan Autonomous Prefecture",
+    ["海南藏族自治州"]="Hainan Tibetan Autonomous Prefecture",
+    ["果洛藏族自治州"]="Golog Tibetan Autonomous Prefecture",
+    ["玉树藏族自治州"]="Yushu Tibetan Autonomous Prefecture",
+    ["海西蒙古族藏族自治州"]="Haixi Mongol and Tibetan Autonomous Prefecture",
+    ["宁夏回族自治区"]="Ningxia",
+    ["银川市"]="Yinchuan",
+    ["石嘴山市"]="Shizuishan",
+    ["吴忠市"]="Wuzhong",
+    ["固原市"]="Guyuan",
+    ["中卫市"]="Zhongwei",
+    ["新疆维吾尔自治区"]="Xinjiang",
+    ["乌鲁木齐市"]="Urumqi",
+    ["克拉玛依市"]="Karamay",
+    ["吐鲁番市"]="Turpan",
+    ["哈密市"]="Hami",
+    ["昌吉回族自治州"]="Changji Hui Autonomous Prefecture",
+    ["博尔塔拉蒙古自治州"]="Bortala Mongol Autonomous Prefecture",
+    ["巴音郭楞蒙古自治州"]="Bayingolin Mongol Autonomous Prefecture",
+    ["阿克苏地区"]="Aksu Prefecture",
+    ["克孜勒苏柯尔克孜自治州"]="Kizilsu Kyrgyz Autonomous Prefecture",
+    ["喀什地区"]="Kashgar Prefecture",
+    ["和田地区"]="Hotan Prefecture",
+    ["伊犁哈萨克自治州"]="Ili Kazakh Autonomous Prefecture",
+    ["塔城地区"]="Tacheng Prefecture",
+    ["阿勒泰地区"]="Altay Prefecture",
+    ["香港特别行政区"]="Hong Kong",
+    ["澳门特别行政区"]="Macao",
+    ["台湾省"]="Taiwan",
+    ["台北市"]="Taipei",
+    ["新北市"]="New Taipei",
+    ["桃园市"]="Taoyuan",
+    ["台中市"]="Taichung",
+    ["台南市"]="Tainan",
+    ["高雄市"]="Kaohsiung",
+    ["基隆市"]="Keelung",
+    ["新竹市"]="Hsinchu",
+    ["嘉义市"]="Chiayi",
+}
+local function cityLabel(city)
+    if Inkfolio.language()=='en_US'then return assert(Inkfolio.LOCATION_NAMES[city.name],'InkFolio: missing location name')end
+    return (city.name:gsub('市$',''))
+end
+Inkfolio.cityLabel=cityLabel
+local function weatherText(offset,include_city)
+    offset=offset or 0
+    local label=offset==0 and L('今日') or L('明日')
+    local city=selectedWeatherCity()
+    if not city then return include_city==false and (label..L(' 未选择城市')) or L('未选择城市') end
+    local prefix=(include_city==false and '' or (cityLabel(city)..(Inkfolio.language()=='en_US'and ' 'or '　')))..label..' '
+    local record=WEATHER.records[city.code]
+    local text=Inkfolio.cachedWeather(record,Inkfolio.weatherDate(offset))
+    if text then return prefix..Inkfolio.forecastDisplay(text) end
+    if RUN.worker and RUN.worker.kind=='weather' and RUN.worker.city==city.code then return prefix..L('获取中…') end
+    if WEATHER.error and WEATHER.attempt_city==city.code and WEATHER.attempt_day==localDate() then return prefix..L(WEATHER.error)end
+    if record and record.day==localDate() and record.forecast_errors and record.forecast_errors[Inkfolio.weatherDate(offset)] then return prefix..L('天气获取失败') end
+    if WEATHER.attempt_city==city.code and WEATHER.attempt_day==localDate() then return prefix..L('天气获取失败') end
+    return prefix..L('待联网更新')
+end
+-- Stable Chinese forecast keys match the NMC cache; only display text is localized.
+Inkfolio.WEATHER_CONDITIONS={
+    ['晴']={'sun','Clear'},['多云']={'partly_cloudy','Partly cloudy'},['晴间多云']={'partly_cloudy','Mostly clear'},
+    ['阴']={'cloud','Cloudy'},['阴天']={'cloud','Cloudy'},['阵雨']={'showers','Showers'},
+    ['雷阵雨']={'thunder','Thunderstorms'},['雷雨']={'thunder','Thunderstorms'},
+    ['雷阵雨伴有冰雹']={'hail','Thunderstorms with hail'},['冰雹']={'hail','Hail'},
+    ['雨夹雪']={'sleet','Rain and snow'},['小雨']={'rain','Light rain'},['中雨']={'rain','Rain'},
+    ['大雨']={'rain','Heavy rain'},['暴雨']={'rain','Heavy rain'},['大暴雨']={'rain','Torrential rain'},
+    ['特大暴雨']={'rain','Torrential rain'},['雨']={'rain','Rain'},['冻雨']={'sleet','Freezing rain'},
+    ['阵雪']={'snow','Snow showers'},['小雪']={'snow','Light snow'},['中雪']={'snow','Snow'},
+    ['大雪']={'snow','Heavy snow'},['暴雪']={'snow','Heavy snow'},['雪']={'snow','Snow'},
+    ['小到中雨']={'rain','Light to moderate rain'},['中到大雨']={'rain','Moderate to heavy rain'},
+    ['大到暴雨']={'rain','Heavy rain'},['暴雨到大暴雨']={'rain','Torrential rain'},['大暴雨到特大暴雨']={'rain','Torrential rain'},
+    ['小到中雪']={'snow','Light to moderate snow'},['中到大雪']={'snow','Moderate to heavy snow'},['大到暴雪']={'snow','Heavy snow'},
+    ['雾']={'fog','Fog'},['轻雾']={'fog','Mist'},['浓雾']={'fog','Dense fog'},['强浓雾']={'fog','Dense fog'},
+    ['大雾']={'fog','Dense fog'},['特强浓雾']={'fog','Dense fog'},['霾']={'haze','Haze'},
+    ['轻度霾']={'haze','Light haze'},['中度霾']={'haze','Haze'},['重度霾']={'haze','Heavy haze'},['严重霾']={'haze','Heavy haze'},
+    ['浮尘']={'dust','Dust'},['扬沙']={'dust','Blowing sand'},['沙尘暴']={'dust','Dust storm'},['强沙尘暴']={'dust','Severe dust storm'},
+}
+function Inkfolio.weatherCondition(info)
+    local item=Inkfolio.WEATHER_CONDITIONS[info]
+    if item then return item[1],Inkfolio.language()=='en_US' and item[2] or info end
+    -- Preserve an unknown condition instead of inventing a sunny-weather icon.
+    local first,last=info:match('^(.-)转(.-)$')
+    if first and Inkfolio.WEATHER_CONDITIONS[first] and Inkfolio.WEATHER_CONDITIONS[last]then
+        local _,a=Inkfolio.weatherCondition(first);local _,b=Inkfolio.weatherCondition(last)
+        return nil,Inkfolio.language()=='en_US'and (a..' → '..b)or info
+    end
+    return nil,info
+end
+function Inkfolio.forecastDisplay(text)
+    if not text then return nil end
+    local condition,temperature=text:match('^(.-)%s+([%-]?%d+～[%-]?%d+°C)$')
+    if not condition then return L(text)end
+    local _,name=Inkfolio.weatherCondition(condition)
+    if Inkfolio.language()=='en_US'then temperature=temperature:gsub('～','–')end
+    return name..' '..temperature
+end
+function Inkfolio.weatherDisplay()
+    local mode=G_reader_settings:readSetting(S.weather_display)or 'text'
+    assert(mode=='text'or mode=='icons','InkFolio: invalid weather display setting')
+    return mode
+end
+-- Original vector artwork: a 24×24 grid, 1.7-unit rounded strokes, no emoji/font dependency.
+Inkfolio.WEATHER_ART={
+    sun='<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/>',
+    cloud='<path d="M6 18a4.5 4.5 0 0 1-1-8.9A6.5 6.5 0 0 1 17.5 8a5 5 0 0 1 .5 10Z"/>',
+    partly_cloudy='<circle cx="8" cy="8" r="3.5"/><path d="M8 1v1.5M1 8h1.5M3 3l1 1m9-1-1 1M16 7h1.5M3 13l1-1"/><path fill="white" d="M8 20a4 4 0 0 1-1-7.9 5.5 5.5 0 0 1 10.5-1.6A4.8 4.8 0 0 1 18 20Z"/>',
+    rain='<path d="M6 15a3.5 3.5 0 0 1-.8-6.9 5.6 5.6 0 0 1 10.8-1.2A4.1 4.1 0 0 1 18 15ZM7 18l-1 3m6-3-1 3m6-3-1 3"/>',
+    showers='<circle cx="7" cy="6" r="3"/><path d="M7 1v1M1 6h1M2.5 1.5l1 1m8-1-1 1"/><path fill="white" d="M7 16a3.5 3.5 0 0 1-.8-6.9A5 5 0 0 1 16 8a4 4 0 0 1 2 8Z"/><path d="m8 19-1 2m8-2-1 2"/>',
+    thunder='<path d="M6 14a3.5 3.5 0 0 1-.8-6.9A5.6 5.6 0 0 1 16 6a4.1 4.1 0 0 1 2 8Z"/><path d="m12 15-3 4h4l-2 4m7-6-1 3"/>',
+    snow='<path d="M6 13a3.5 3.5 0 0 1-.8-6.9A5.6 5.6 0 0 1 16 5a4.1 4.1 0 0 1 2 8ZM7 16v6m-2.6-4.5 5.2 3m-5.2 0 5.2-3M17 16v6m-2.6-4.5 5.2 3m-5.2 0 5.2-3"/>',
+    sleet='<path d="M6 13a3.5 3.5 0 0 1-.8-6.9A5.6 5.6 0 0 1 16 5a4.1 4.1 0 0 1 2 8ZM7 17l-1 4M16 16v6m-2.6-4.5 5.2 3m-5.2 0 5.2-3"/>',
+    hail='<path d="M6 13a3.5 3.5 0 0 1-.8-6.9A5.6 5.6 0 0 1 16 5a4.1 4.1 0 0 1 2 8Z"/><circle cx="7" cy="18" r="1.5"/><circle cx="16" cy="20" r="1.5"/>',
+    fog='<path d="M5 10a4 4 0 0 1 2-7 5.2 5.2 0 0 1 9.5 1A4 4 0 0 1 20 10M3 14h18M5 18h14M3 22h18"/>',
+    haze='<path d="M7 11a5 5 0 1 1 10 0M12 1v2M3 5l2 1M21 5l-2 1M3 13h18M5 17h14M3 21h18"/>',
+    dust='<path d="M3 7h13a2 2 0 1 0-2-2M3 12h17M3 17h12a2 2 0 1 1-2 2M7 4h.1M19 20h.1"/>',
+}
+local WeatherIcon=WidgetContainer:extend{}
+function WeatherIcon:init()
+    self.dimen=Geom:new{w=self.size,h=self.size}
+    self.foreground=Blitbuffer.COLOR_BLACK;self.background=Blitbuffer.COLOR_WHITE
+end
+function WeatherIcon:getBaseline()return self.size end
+function WeatherIcon:paintTo(bb,x,y)
+    self.dimen.x,self.dimen.y=x,y
+    if not self.image then
+        local art=assert(Inkfolio.WEATHER_ART[self.condition],'InkFolio: missing weather artwork')
+        -- White fills hide the rear sun in layered icons; use the same palette as the card.
+        local fg=self.foreground==Blitbuffer.COLOR_WHITE and '#ffffff'or '#000000'
+        local bg=self.background==UI_THEMES.cover.card_dark and '#333333'or '#ffffff'
+        art=art:gsub('fill="white"','fill="'..bg..'"')
+        local svg='<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><rect width="24" height="24" fill="'..bg..'"/><g fill="none" stroke="'..fg..'" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">'..art..'</g></svg>'
+        self.image=assert(RenderImage:renderImageData(svg,#svg,false,self.size,self.size),'InkFolio: weather icon rendering failed')
+        -- SVG backends may return the native viewBox size. Scale the whole artwork, never crop it.
+        if self.image:getWidth()~=self.size or self.image:getHeight()~=self.size then
+            self.image=assert(RenderImage:scaleBlitBuffer(self.image,self.size,self.size,true),'InkFolio: weather icon scaling failed')
+        end
+    end
+    bb:blitFrom(self.image,x,y,0,0,self.size,self.size)
+end
+function WeatherIcon:setDark()
+    self.foreground=Blitbuffer.COLOR_WHITE;self.background=UI_THEMES.cover.card_dark
+    if self.image then self.image:free();self.image=nil end
+end
+function WeatherIcon:free()
+    if self.image then self.image:free();self.image=nil end
+end
+Inkfolio.WeatherIcon=WeatherIcon
+-- Compose icons as real widgets, keeping status/temperature text selectable and measurable.
+function Inkfolio.weatherWidget(offset,include_city,txt,width,align,size,icons)
+    local text=weatherText(offset,include_city)
+    if Inkfolio.weatherDisplay()~='icons'then return txt(text,'header',width,align)end
+    local city=selectedWeatherCity();local record=city and WEATHER.records[city.code]
+    local raw=Inkfolio.cachedWeather(record,Inkfolio.weatherDate(offset))
+    -- Valid cached forecasts use icons even if the latest refresh failed.
+    -- Without a usable forecast, show the full loading or error message.
+    if not raw then return txt(text,'header',width,align)end
+    local condition,temperature=raw:match('^(.-)%s+([%-]?%d+～[%-]?%d+°C)$')
+    local icon_id=condition and Inkfolio.weatherCondition(condition)
+    if not icon_id then return txt(text,'header',width,align)end
+    if Inkfolio.language()=='en_US'then temperature=temperature:gsub('～','–')end
+    local prefix=(include_city==false and ''or cityLabel(city)..' ')
+    local day=offset==0 and L('今日')or L('明日')
+    local icon=WeatherIcon:new{condition=icon_id,size=size}
+    if icons then icons[#icons+1]=icon end
+    local gap=math.max(2,math.floor(size*.2))
+    local available=math.max(2,width-size-2*gap)
+    local label=txt(prefix..day,'header',available,'left')
+    local value=txt(temperature,'header',available,'left')
+    local function naturalWidth(widget)
+        local measure=TextWidget:new{text=widget.text,face=widget.face,bold=widget.bold,padding=0}
+        local result=math.ceil(measure:getSize().w)+1;measure:free();return result
+    end
+    local label_width,value_width=naturalWidth(label),naturalWidth(value)
+    if label_width+value_width>available then
+        label_width=math.min(label_width,math.max(math.floor(available*.4),available-value_width))
+        value_width=available-label_width
+    end
+    label.width=label_width;label:update()
+    value.width=value_width;value:update()
+    local bounds=require('ui/rendertext'):sizeUtf8Text(0,false,value.face,'0123456789',true,value.bold)
+    local digit_center=(bounds.y_bottom-bounds.y_top)/2
+    local baseline=math.max(label:getBaseline(),value:getBaseline(),size/2-digit_center)
+    local function shifted(child,offset)
+        offset=math.floor(offset+.5)
+        if offset<=0 then return child end
+        return VerticalGroup:new{VerticalSpan:new{width=offset},child}
+    end
+    local icon_y=math.floor(baseline+digit_center-size/2+.5)
+    local content=HorizontalGroup:new{align='top',shifted(label,baseline-label:getBaseline()),HorizontalSpan:new{width=gap},
+        shifted(icon,icon_y),HorizontalSpan:new{width=gap},shifted(value,baseline-value:getBaseline())}
+    local remaining=math.max(0,width-content:getSize().w)
+    local leading=align=='right'and remaining or align=='center'and math.floor(remaining/2)or 0
+    local line=HorizontalGroup:new{align='top',HorizontalSpan:new{width=leading},content,HorizontalSpan:new{width=remaining-leading}}
+    line.inkfolio_weather=true;line.inkfolio_center=icon_y+size/2
+    line.getBaseline=function()return baseline end
+    return line
+end
+
+weatherCheck=function(allow_active)
+    if RUN.sleeping or not networkingEnabled() or RUN.transport_broken or (RUN.active and not allow_active) or RUN.worker or not weatherPending() then return false end
+    if not connected() then return false end
+    local city,day,token=selectedWeatherCity(),localDate(),RUN.token
+    local standalone=not RUN.active
+    if standalone then
+        RUN.processed,RUN.failed=0,0
+        progressBegin(false,true)
+    end
+    progressStage(Inkfolio.language()=='en_US'and ('Updating weather for '..cityLabel(city)..'…')or '正在获取'..cityLabel(city)..'天气')
+    Inkfolio.infoAttempt('weather',city.code)
+    local started=sendHTTP('https://www.nmc.cn/rest/weather?stationid='..socket_url.escape(city.code),token,function(body,error_text)
+        if token~=RUN.token then return end
+        local forecasts,errors={},{}
+        for offset=0,1 do
+            local date=Inkfolio.weatherDate(offset,day)
+            if error_text then errors[date]=error_text
+            else forecasts[date],errors[date]=parseWeather(body,city.code,date) end
+        end
+        local any=next(forecasts)~=nil
+        local success=true
+        local reason=error_text
+        local result={}
+        for offset=0,1 do
+            local date=Inkfolio.weatherDate(offset,day)
+            if Inkfolio.weatherSelected(offset) then
+                if not forecasts[date] then success=false;reason=reason or errors[date] end
+                result[#result+1]=(offset==0 and L('今日 ') or L('明日 '))..(Inkfolio.forecastDisplay(forecasts[date])or L('天气获取失败'))
+            end
+        end
+        if any then
+            -- A partial refresh replaces only dates it actually fetched.
+            -- Request errors remain in status; they do not invalidate today's cache.
+            local previous=WEATHER.records[city.code]
+            for offset=0,1 do
+                local date=Inkfolio.weatherDate(offset,day)
+                forecasts[date]=forecasts[date]or Inkfolio.cachedWeather(previous,date,day)
+            end
+            WEATHER.records[city.code]={day=day,text=forecasts[day],forecasts=forecasts,forecast_errors=errors,updated_at=os.time()}
+            WEATHER.error=nil
+        else
+            WEATHER.error=L('天气获取失败')
+        end
+        if not success then logger.warn('READ RECEIPT weather:',reason) end
+        Inkfolio.infoResult('weather',city.code,success and 'success' or 'failed',not success and reason or nil)
+        RUN.weather_result=cityLabel(city)..(Inkfolio.language()=='en_US'and ': 'or '：')..table.concat(result,Inkfolio.language()=='en_US'and '; 'or '；')
+        store:saveSetting('weather',WEATHER);store:flush()
+        if refreshQuicklook then refreshQuicklook() end
+        UIManager:nextTick(function()
+            if token~=RUN.token then return end
+            if RUN.active then nextItem()
+            elseif weatherPending() then weatherCheck()
+            else progressEnd(RUN.weather_result);startPoll() end
+        end)
+    end,'weather')
+    if started then
+        WEATHER.pending=false
+        WEATHER.attempt_day,WEATHER.attempt_city,WEATHER.error=day,city.code,L('天气获取中断')
+        WEATHER.next_at=os.time()+Inkfolio.NET_RULES.weather_age
+        RUN.worker.city=city.code
+        store:saveSetting('weather',WEATHER);store:flush()
+    else
+        WEATHER.pending=false
+        WEATHER.attempt_day,WEATHER.attempt_city=day,city.code
+        WEATHER.next_at=os.time()+Inkfolio.NET_RULES.weather_age
+        WEATHER.error=L('天气请求未启动')
+        Inkfolio.infoResult('weather',city.code,'failed',RUN.last_error or WEATHER.error)
+        store:saveSetting('weather',WEATHER);store:flush()
+        if standalone then progressEnd(WEATHER.error) end
+    end
+    return started
+end
+
+function Inkfolio.weatherChanged(selected)
+    if selected then RUN.auto_holds.weather=nil end
+    if Inkfolio.weatherEnabled() then
+        local city=selectedWeatherCity()
+        local record=city and WEATHER.records[city.code]
+        for offset=0,1 do
+            if selected and city and Inkfolio.weatherSelected(offset) and not Inkfolio.cachedWeather(record,Inkfolio.weatherDate(offset)) then
+                WEATHER.pending=true;Inkfolio.resetNetworkPause()
+            end
+        end
+        weatherCheck()
+    elseif RUN.worker and RUN.worker.kind=='weather' then
+        Inkfolio.infoResult('weather',RUN.worker.city,'interrupted',L('天气显示已关闭'))
+        stopHTTP(L('天气显示已关闭'))
+        if RUN.active then UIManager:nextTick(nextItem) else progressEnd(L('天气显示已关闭')) end
+    end
+    if startPoll then startPoll()end
+    if refreshQuicklook then refreshQuicklook() end
+end
+
+local function newBooksCheck(force)
+    if not force or RUN.sleeping or RUN.active or RUN.worker or RUN.scanning then return false end
+    RUN.scan_pending=false
+    local paths=collectPaths()
+    if not paths then return false end
+    observePaths(paths);RUN.scanning=true
+    local index=1
+    local function step()
+        if RUN.sleeping then RUN.scanning=false;RUN.scan_pending=true;Inkfolio.saveNetwork();return end
+        for _=1,3 do
+            local path=paths[index]
+            if not path then
+                RUN.scanning=false;Inkfolio.saveNetwork()
+                dailyCheck();startPoll();return
+            end
+            Inkfolio.queueBook(getBookFromFile(path),true);index=index+1
+        end
+        UIManager:scheduleIn(.03,step)
+    end
+    step();return true
+end
+function Inkfolio.monthlyDeadline(now)
+    if not enabled(S.intro) or Inkfolio.networkHeld('monthly') then return nil end
+    now=now or os.time()
+    local state=Inkfolio.monthly
+    if state.pending then return now end
+    local cached=Inkfolio.visibleMonthly()
+    if cached and cached.complete and cached.update_date:sub(1,7)==os.date('%Y-%m',now) then
+        local d=os.date('*t',now)
+        return os.time{year=d.year,month=d.month+1,day=1,hour=0,min=0,sec=0}
+    end
+    if state.attempt_day==os.date('%Y-%m-%d',now) then return Inkfolio.nextDay(now) end
+    return now
+end
+function Inkfolio.dueBooks(now)
+    now=now or os.time();local due,changed={},false
+    for key,book in pairs(NET.pending)do
+        if not Inkfolio.needsFetch(book) or (book.path and lfs.attributes(book.path,'mode')~='file') then
+            NET.pending[key]=nil;changed=true
+        elseif (Inkfolio.bookDeadline(book,now) or math.huge)<=now then due[#due+1]=book end
+    end
+    if changed then Inkfolio.saveNetwork() end
+    local current=currentBook();local priority=current and bookKey(current)
+    table.sort(due,function(a,b)
+        local x,y=bookKey(a),bookKey(b)
+        if (x==priority)~=(y==priority)then return x==priority end
+        return x<y
+    end)
+    return due
+end
+dailyCheck=function(scan)
     resetDay()
-    if RUN.cancelled_wake then return end
-    if newBooksCheck(force_scan) then return end
+    if scan then RUN.scan_pending=true end
+    if RUN.sleeping or not networkingEnabled() or RUN.scanning or RUN.active or RUN.worker then return end
+    if RUN.scan_pending and newBooksCheck(true) then return end
+    if RUN.transport_broken or not connected() then return end
+    if weatherCheck() then return end
     if Inkfolio.monthlyCheck() then return end
-    if RUN.sleeping or not networkingEnabled() or DAILY_DONE or RUN.active or RUN.transport_broken or ROUNDS >= MAX_AUTO then return end
-    if connected() then beginRound(false) end
+    if not Inkfolio.networkHeld('books') then
+        local books=Inkfolio.dueBooks()
+        if #books>0 then beginRound(false,nil,nil,false,books) end
+    end
 end
 local function currentCheck()
-    resetDay()
-    if newBooksCheck(true) then return end
-    if RUN.cancelled_wake or RUN.active or RUN.worker or RUN.sleeping or not networkingEnabled() or RUN.transport_broken or ROUNDS >= MAX_AUTO then return end
-    local b = currentBook()
-    if b and Inkfolio.needsFetch(b) and connected() then beginRound(false,b) end
+    resetDay();Inkfolio.queueBook(currentBook());dailyCheck()
 end
-local POLL_ENABLED = false
+local POLL_ENABLED=false
 local function pollWifi()
-    POLL_ENABLED = false
-    if RUN.sleeping or not networkingEnabled() then return end
-    dailyCheck() -- silently detects Wi-Fi connected, never enables it.
-    if not RUN.cancelled_wake then
-        POLL_ENABLED = true
-        UIManager:scheduleIn(45, pollWifi)
-    end
+    POLL_ENABLED=false
+    dailyCheck();startPoll()
 end
-startPoll = function()
-    if POLL_ENABLED or RUN.sleeping or not networkingEnabled() then return end
-    resetDay()
-    if not RUN.cancelled_wake then
-        POLL_ENABLED = true
-        UIManager:scheduleIn(45, pollWifi)
+startPoll=function()
+    UIManager:unschedule(pollWifi);POLL_ENABLED=false
+    if RUN.sleeping or not networkingEnabled() or RUN.transport_broken or RUN.scanning or RUN.active or RUN.worker then return end
+    local now=os.time();local deadline
+    local function consider(value)if value then deadline=deadline and math.min(deadline,value)or value end end
+    if RUN.scan_pending then consider(now)end
+    consider(Inkfolio.weatherDeadline(now));consider(Inkfolio.monthlyDeadline(now))
+    if not Inkfolio.networkHeld('books')then
+        for _,book in pairs(NET.pending)do consider(Inkfolio.bookDeadline(book,now))end
     end
+    if not deadline or (deadline<=now and not RUN.scan_pending and not connected())then return end
+    POLL_ENABLED=true;UIManager:scheduleIn(math.max(.05,deadline-now),pollWifi)
+end
+function Inkfolio.libraryChanged()
+    RUN.scan_pending=true
+    if RUN.scan_scheduled then return end
+    RUN.scan_scheduled=true
+    UIManager:nextTick(function()
+        RUN.scan_scheduled=false;dailyCheck();startPoll()
+    end)
 end
 local function updateManually()
     if not networkingEnabled() then
         local InfoMessage = require('ui/widget/infomessage')
-        UIManager:show(InfoMessage:new{ text = '插件联网已关闭，请先开启联网开关。' })
+        UIManager:show(InfoMessage:new{ text = L('插件联网已关闭，请先开启联网开关。') })
         return
     end
     if RUN.active or RUN.worker then
         local InfoMessage = require('ui/widget/infomessage')
-        UIManager:show(InfoMessage:new{ text = '已有查询正在进行，请稍后重试。' })
+        UIManager:show(InfoMessage:new{ text = L('已有查询正在进行，请稍后重试。') })
         return
     end
     -- Capture the reading context at invocation, including delayed Wi-Fi connection.
     local target = currentBook()
     if ReaderUI.instance and ReaderUI.instance.document and (not target or target.title == '') then
-        UIManager:show(require('ui/widget/infomessage'):new{text='当前图书信息不可读取，没有发起获取。'})
+        UIManager:show(require('ui/widget/infomessage'):new{text=L('当前图书信息不可读取，没有发起获取。')})
         return
     end
     local function beginManual() return beginRound(true, target, nil, target ~= nil) end
     if connected() then beginManual(); return end
     if not Device:hasWifiToggle() then
         UIManager:show(require('ui/widget/infomessage'):new{
-            text='当前网络不可用，请在设备系统设置中连接网络后重试。'})
+            text=L('当前网络不可用，请在设备系统设置中连接网络后重试。')})
         return
     end
     if NetworkMgr:isWifiOn() then
         local InfoMessage = require('ui/widget/infomessage')
-        UIManager:show(InfoMessage:new{text='Wi-Fi 已开启，但尚未连接网络。请先连接后重试。'})
+        UIManager:show(InfoMessage:new{text=L('Wi-Fi 已开启，但尚未连接网络。请先连接后重试。')})
         return
     end
     local ConfirmBox = require('ui/widget/confirmbox')
-    UIManager:show(ConfirmBox:new{
-        text = '当前 Wi-Fi 未连接，需要开启 Wi-Fi 才能手动更新图书信息。',
-        ok_text = '开启 Wi-Fi', cancel_text = '取消',
+    UIManager:show(ConfirmBox:new{cancel_text=L('取消'),
+        text = L('当前 Wi-Fi 未连接，需要开启 Wi-Fi 才能手动更新图书信息。'),
+        ok_text = L('开启 Wi-Fi'), cancel_text = L('取消'),
         ok_callback = function()
             if not networkingEnabled() then return end
             MANUAL_CONNECT_PENDING = true
@@ -2460,7 +4626,7 @@ local function updateManually()
                 if MANUAL_CONNECT_PENDING then
                     MANUAL_CONNECT_PENDING = false
                     local InfoMessage = require('ui/widget/infomessage')
-                    UIManager:show(InfoMessage:new{text='Wi-Fi 连接失败，未执行手动更新。'})
+                    UIManager:show(InfoMessage:new{text=L('Wi-Fi 连接失败，未执行手动更新。')})
                 end
             end)
         end,
@@ -2598,16 +4764,6 @@ function ReceiptPaper:paintTo(bb,x,y)
     local size=self:getSize()
     self.dimen=Geom:new{x=x,y=y,w=size.w,h=size.h}
     bb:paintRect(x,y,size.w,size.h,Blitbuffer.COLOR_WHITE)
-    if self.theme.id=='pixel' then
-        for gy=self.grid_pitch,size.h-self.grid_pitch,self.grid_pitch do
-            for gx=self.grid_pitch,size.w-self.grid_pitch,self.grid_pitch do
-                if gx<self.padding_left/2 or gx>size.w-self.padding_right/2
-                    or gy<self.padding_top/2 or gy>size.h-self.padding_bottom/2 then
-                    bb:paintRect(x+gx,y+gy,self.grid_dot,self.grid_dot,Blitbuffer.COLOR_GRAY_9)
-                end
-            end
-        end
-    end
     if self.outline_color then bb:paintBorder(x,y,size.w,size.h,self.outline_width,self.outline_color,0) end
     self[1]:paintTo(bb,x+self.padding_left,y+self.padding_top)
 end
@@ -2726,7 +4882,7 @@ function ReadingBars:paintTo(bb,x,y)
     for _,day in ipairs(self.data.days) do peak=math.max(peak,value(day) or 0) end
     local step=is_words and 10^math.max(0,math.floor(math.log(math.max(1,peak))/math.log(10))) or 30
     local ceiling=math.max(step,math.ceil(peak/step)*step)
-    local top_label=is_words and (ceiling>=10000 and string.format('%.1f万字',ceiling/10000) or string.format('%.0f字',ceiling)) or (tostring(ceiling)..'分')
+    local top_label=is_words and (Inkfolio.language()=='en_US'and (ceiling>=1000 and string.format('%.1fk',ceiling/1000)or tostring(ceiling))or (ceiling>=10000 and string.format('%.1f万字',ceiling/10000) or string.format('%.0f字',ceiling)))or (tostring(ceiling)..L('分'))
     local axis=TextWidget:new{text=top_label,face=Font:getFace(axis_font,fs),padding=0}
     local left=math.ceil(axis:getSize().w)+math.max(2,self.stroke*2)
     axis:free()
@@ -2766,7 +4922,7 @@ function ReadingBars:paintTo(bb,x,y)
         if n==7 or i==1 or i==n or (day.day%5==0 and i<n-1) then
             local lw=math.floor(font_px*2)
             local lx=math.max(0,math.min(self.width-lw,gx-math.floor(lw/2)))
-            label(n==7 and ({'一','二','三','四','五','六','日'})[i] or tostring(day.day),
+            label(n==7 and (Inkfolio.language()=='en_US'and ({'S','M','T','W','T','F','S'})[os.date('*t',day.start).wday]or ({'日','一','二','三','四','五','六'})[os.date('*t',day.start).wday]) or tostring(day.day),
                 x+lx,y+bottom+math.floor(font_px*.25),lw,'center',day.future and Blitbuffer.COLOR_GRAY_6 or nil)
         end
     end
@@ -2806,7 +4962,7 @@ if lfs.attributes(Inkfolio.wordPath,'mode')=='file' then
             end
         end)
     end
-    if not ok then Inkfolio.wordState.storage_error='字数及每日记录损坏' end
+    if not ok then Inkfolio.wordState.storage_error=L('字数及每日记录损坏') end
 end
 function Inkfolio.scheduleWordSave()
     local state=Inkfolio.wordState
@@ -2816,7 +4972,7 @@ end
 function Inkfolio.recordDailyWords(amount,incomplete,now)
     local state=Inkfolio.wordState
     if state.storage_error then return end
-    assert(Inkfolio.validWordInteger(amount),'每日新增字数无效')
+    assert(Inkfolio.validWordInteger(amount),L('每日新增字数无效'))
     local date=os.date('%Y-%m-%d',now or os.time())
     local day=state.days[date] or {words=0}
     if state.days[date] and amount==0 and (not incomplete or day.incomplete) then return end
@@ -2824,10 +4980,10 @@ function Inkfolio.recordDailyWords(amount,incomplete,now)
     if incomplete then day.incomplete=true end
     state.days[date]=day;Inkfolio.scheduleWordSave()
 end
-function Inkfolio.readWordChart(period,now)
+function Inkfolio.readWordChart(period,now,sunday_first)
     local state=Inkfolio.wordState
     if state.storage_error then return nil,state.storage_error end
-    local days=Inkfolio.periodDays(period,now)
+    local days=Inkfolio.periodDays(period,now,sunday_first)
     local total,missing,incomplete=0,0,false
     for _,day in ipairs(days) do
         if not day.future then
@@ -2843,13 +4999,13 @@ function Inkfolio.readWordChart(period,now)
     return {period=period,metric='words',days=days,total=total,missing=missing,incomplete=incomplete}
 end
 local function wordSignature(path)
-    local attrs=assert(lfs.attributes(path),'书籍文件无法读取')
-    assert(attrs.mode=='file','书籍文件无法读取')
+    local attrs=assert(lfs.attributes(path),L('书籍文件无法读取'))
+    assert(attrs.mode=='file',L('书籍文件无法读取'))
     return tostring(attrs.size)..':'..tostring(attrs.modification)
 end
 function Inkfolio.countWords(text)
-    assert(type(text)=='string','正文不是文本')
-    assert(util.fixUtf8(text,'')==text,'正文含无效字符')
+    assert(type(text)=='string',L('正文不是文本'))
+    assert(util.fixUtf8(text,'')==text,L('正文含无效字符'))
     local count,english=0,false
     for char in text:gmatch('[%z\1-\127\194-\244][\128-\191]*') do
         local cp=ffiUtil.utf8charcode(char)
@@ -2869,10 +5025,10 @@ end
 function Inkfolio.addWordRange(doc,record,start,finish)
     local function before(a,b)
         local value=doc:compareXPointers(a,b)
-        assert(value~=nil,'正文位置失效')
+        assert(value~=nil,L('正文位置失效'))
         return value==1
     end
-    assert(not before(finish,start),'正文位置顺序错误')
+    assert(not before(finish,start),L('正文位置顺序错误'))
     if start==finish then return record,0 end
     local function words(a,b)
         if a==b then return 0 end
@@ -2884,7 +5040,7 @@ function Inkfolio.addWordRange(doc,record,start,finish)
         local b=before(finish,range[2]) and finish or range[2]
         if before(a,b) then amount=amount-words(a,b) end
     end
-    assert(amount>=0,'正文重叠字数异常')
+    assert(amount>=0,L('正文重叠字数异常'))
     local merged={}
     local a,b=start,finish
     local inserted=false
@@ -2907,7 +5063,7 @@ function Inkfolio.observeWords(ui)
     local doc,path=ui.document,ui.document.file
     if not path then return end
     if not ui.rolling or not doc.compareXPointers or not doc.getTextFromXPointers or not doc.getTextFromPositions then
-        state.errors[path]='格式不支持';state.session_error='部分内容不支持字数统计'
+        state.errors[path]=L('格式不支持');state.session_error=L('部分内容不支持字数统计')
         Inkfolio.recordDailyWords(0,true);return
     end
     local ok,reason=pcall(function()
@@ -2916,33 +5072,33 @@ function Inkfolio.observeWords(ui)
         if not record or record.signature~=signature then record={signature=signature,ranges={},total=0} end
         local visible=doc:getTextFromPositions({x=0,y=0},{x=Screen:getWidth(),y=Screen:getHeight()},true)
         if not visible then return end -- CRe has no selectable text on an illustration page.
-        assert(visible.pos0 and visible.pos1,'当前正文位置无法读取')
+        assert(visible.pos0 and visible.pos1,L('当前正文位置无法读取'))
         local updated,added=Inkfolio.addWordRange(doc,record,visible.pos0,visible.pos1)
         state.session[path]=updated;state.session_total=state.session_total+added
         Inkfolio.recordDailyWords(added,false)
     end)
     if not ok then
-        state.errors[path]='本次字数记录不完整';state.session_error='本次字数记录不完整'
+        state.errors[path]=L('本次字数记录不完整');state.session_error=L('本次字数记录不完整')
         Inkfolio.recordDailyWords(0,true)
         logger.warn('InkFolio wake words failed',reason)
     end
 end
 function Inkfolio.documentWords(doc)
-    assert(doc.getPageXPointer and doc.isXPointerInDocument and doc.getTextFromXPointers,'格式不支持')
-    local xp=assert(doc:getPageXPointer(1),'正文位置无法读取')
+    assert(doc.getPageXPointer and doc.isXPointerInDocument and doc.getTextFromXPointers,L('格式不支持'))
+    local xp=assert(doc:getPageXPointer(1),L('正文位置无法读取'))
     local body=xp:match('^(.-/body)')
     if not body then
         -- A short HTML first page may point into head/title rather than body.
         local root=xp:match('^(/[^/%.%[]+)')
         body=root and root..'/body'
     end
-    assert(body,'正文根节点不支持')
-    assert(doc:isXPointerInDocument(body..'.0'),'正文根节点无法读取')
+    assert(body,L('正文根节点不支持'))
+    assert(doc:isXPointerInDocument(body..'.0'),L('正文根节点无法读取'))
     -- Element offsets range from zero to the exact number of children.
     -- Search validated offsets to find its end, without navigating or changing selection.
     local low,high=0,1
     while doc:isXPointerInDocument(body..'.'..high) do
-        assert(high<1073741824,'正文边界无效')
+        assert(high<1073741824,L('正文边界无效'))
         low=high;high=high*2
     end
     while high-low>1 do
@@ -2950,24 +5106,24 @@ function Inkfolio.documentWords(doc)
         if doc:isXPointerInDocument(body..'.'..middle) then low=middle else high=middle end
     end
     if low==0 then return 0 end
-    local text=assert(doc:getTextFromXPointers(body..'.0',body..'.'..low,false),'全书正文无法读取')
+    local text=assert(doc:getTextFromXPointers(body..'.0',body..'.'..low,false),L('全书正文无法读取'))
     return Inkfolio.countWords(text)
 end
 function Inkfolio.estimatedWords(ui,progress)
     local state=Inkfolio.wordState
     if state.storage_error then return nil,state.storage_error end
     local doc=ui and ui.document
-    if not doc or not doc.file then return nil,'书籍文件无法读取' end
+    if not doc or not doc.file then return nil,L('书籍文件无法读取') end
     local ok,amount=pcall(function()
         local signature=wordSignature(doc.file)
         local record=state.books[doc.file]
         if not record or record.signature~=signature or record.document_total==nil then
-            assert(not ui.file_cover,'请先打开本书统计字数')
+            assert(not ui.file_cover,L('请先打开本书统计字数'))
             record={signature=signature,document_total=Inkfolio.documentWords(doc)}
             state.books[doc.file]=record;state.dirty=true
             if not state.flush_scheduled then state.flush_scheduled=true;UIManager:scheduleIn(5,Inkfolio.flushWords) end
         end
-        assert(type(progress)=='number' and progress>=0 and progress<=1,'阅读进度无效')
+        assert(type(progress)=='number' and progress>=0 and progress<=1,L('阅读进度无效'))
         return math.floor(record.document_total*progress+.5)
     end)
     if not ok then logger.warn('InkFolio book words failed',amount);return nil,tostring(amount):match(': (.*)$') or tostring(amount) end
@@ -2987,7 +5143,7 @@ function Inkfolio.flushWords()
         assert(os.rename(temporary,Inkfolio.wordPath));assert(ffiUtil.fsyncDirectory(Inkfolio.wordPath))
     end)
     if file then file:close() end
-    if not ok then os.remove(temporary);state.storage_error='字数记录保存失败';logger.warn('InkFolio word save failed',err)
+    if not ok then os.remove(temporary);state.storage_error=L('字数记录保存失败');logger.warn('InkFolio word save failed',err)
     else state.dirty=false end
 end
 function Inkfolio.resumeWords()
@@ -3009,22 +5165,38 @@ end
 Inkfolio.recordDailyWords(0,false)
 if Inkfolio.wordState.dirty and not Inkfolio.wordState.storage_error then Inkfolio.scheduleWordSave() end
 
+function Inkfolio.compactNumber(amount)
+    local text
+    if amount>=1000000 then text=string.format('%.1fM',amount/1000000)
+    elseif amount>=1000 then text=string.format('%.1fk',amount/1000)
+    else return string.format('%.0f',amount)end
+    return (text:gsub('%.0([kM])$','%1'))
+end
+
 local function formatWordCount(amount)
-    assert(type(amount)=='number' and amount>=0 and amount<math.huge and amount==math.floor(amount),'字数无效')
-    if amount<10000 then return string.format('%.0f字',amount) end
+    assert(type(amount)=='number' and amount>=0 and amount<math.huge and amount==math.floor(amount),L('字数无效'))
+    if Inkfolio.language()=='en_US'then
+        return Inkfolio.compactNumber(amount)..(amount==1 and ' word'or ' words')
+    end
+    if amount<10000 then return string.format(L('%.0f字'),amount) end
     return string.format('%.1f万字',amount/10000)
+end
+
+function Inkfolio.summaryAmount(amount,metric)
+    if Inkfolio.language()=='en_US'then return metric=='words'and Inkfolio.compactNumber(amount)or tostring(amount)end
+    return metric=='words'and formatWordCount(amount)or amount..'页'
 end
 
 -- One local snapshot shares period totals between summaries, charts and goal.
 function Inkfolio.statisticsSnapshot(ui,now)
     local snap={now=now or os.time(),ui=ui,time_cache={},word_cache={},page_cache={},statuses={}}
     local first=snap.now
-    local function include(period)
-        if not period then first=0 else local _,stamp=Inkfolio.periodDays(period,snap.now);first=math.min(first,stamp) end
+    local function include(period,sunday_first)
+        if not period then first=0 else local _,stamp=Inkfolio.periodDays(period,snap.now,sunday_first);first=math.min(first,stamp) end
     end
     if enabled(S.stats) then
         for _,item in ipairs(summaryItems())do include(item.period) end
-        for _,item in ipairs(Inkfolio.chartItems())do if item.metric=='time' then include(item.period) end end
+        for _,item in ipairs(Inkfolio.chartItems())do if item.metric=='time' then include(item.period,Inkfolio.language()=='en_US') end end
     end
     local goal=Inkfolio.goalConfig()
     if goal.enabled and goal.metric=='time' then include(goal.period) end
@@ -3037,13 +5209,13 @@ function Inkfolio.statisticsSnapshot(ui,now)
         end
         return self.native,self.native_error
     end
-    function snap:time(period,id)
-        local key=(period or 'total')..':'..tostring(id or 'global')
+    function snap:time(period,id,sunday_first)
+        local key=(period or 'total')..':'..tostring(id or 'global')..':'..tostring(sunday_first==true)
         if self.time_cache[key] then return unpack(self.time_cache[key]) end
         local records,reason=self:records()
         if not records then self.time_cache[key]={false,reason};return nil,reason end
         local data
-        if period then data=Inkfolio.readCurve(self.ui,period,self.now,records,id)
+        if period then data=Inkfolio.readCurve(self.ui,period,self.now,records,id,sunday_first)
         else
             data={total=0,known=0,missing=0}
             for i,start in ipairs(records[1] or {}) do
@@ -3055,12 +5227,13 @@ function Inkfolio.statisticsSnapshot(ui,now)
         end
         self.time_cache[key]={data};return data
     end
-    function snap:words(period)
-        if not self.word_cache[period] then
-            local data,reason=Inkfolio.readWordChart(period,self.now)
-            self.word_cache[period]={data or false,reason}
+    function snap:words(period,sunday_first)
+        local key=period..':'..tostring(sunday_first==true)
+        if not self.word_cache[key] then
+            local data,reason=Inkfolio.readWordChart(period,self.now,sunday_first)
+            self.word_cache[key]={data or false,reason}
         end
-        return unpack(self.word_cache[period])
+        return unpack(self.word_cache[key])
     end
     function snap:pages(period,id)
         local key=(period or 'total')..':'..tostring(id or 'global')
@@ -3070,13 +5243,13 @@ function Inkfolio.statisticsSnapshot(ui,now)
         local start=0
         if period then local _,stamp=Inkfolio.periodDays(period,self.now);start=stamp end
         local opened,db=pcall(SQ3.open,STATS_PATH)
-        if not opened or not db then return nil,'阅读统计无法打开' end
+        if not opened or not db then return nil,L('阅读统计无法打开') end
         local filter=id and string.format(' AND id_book=%d',id) or ''
         local ok,count=pcall(db.rowexec,db,string.format(
             'SELECT count(*) FROM (SELECT id_book,page FROM page_stat WHERE start_time<%d AND (start_time+duration>%d OR (duration=0 AND start_time>=%d))%s GROUP BY id_book,page);',self.now+1,start,start,filter))
         db:close()
-        if not ok then logger.warn('InkFolio page query failed',count);return nil,'阅读页数读取失败' end
-        count=assert(tonumber(count),'无效阅读页数')
+        if not ok then logger.warn('InkFolio page query failed',count);return nil,L('阅读页数读取失败') end
+        count=assert(tonumber(count),L('无效阅读页数'))
         self.page_cache[key]={count};return count
     end
     return snap
@@ -3089,12 +5262,12 @@ function Inkfolio.summaryData(snapshot,item)
         if not id and stats and stats.getIdBookDB then
             local ok,value=pcall(stats.getIdBookDB,stats);if ok then id=tonumber(value) end
         end
-        if not id then snapshot:note(item.label,'当前图书没有统计记录');return {metric='pages'} end
+        if not id then snapshot:note(item.label,L('当前图书没有统计记录'));return {metric='pages'} end
     end
     local out={metric=item.global and item.period and Inkfolio.summaryMetric() or 'pages'}
     local time,reason=snapshot:time(item.period,id)
     if time and time.known>0 then out.time=time.total;out.incomplete=(time.missing or 0)>0 end
-    snapshot:note(item.label..'时长',reason or (not out.time and '暂无时长记录' or out.incomplete and '部分日期没有记录' or nil))
+    snapshot:note(item.label..L('时长'),reason or (not out.time and L('暂无时长记录') or out.incomplete and L('部分日期没有记录') or nil))
     if out.metric=='words' then
         local words,error=snapshot:words(item.period)
         if words then
@@ -3102,43 +5275,43 @@ function Inkfolio.summaryData(snapshot,item)
             for _,day in ipairs(words.days)do if day.words~=nil then known=true;break end end
             if known then out.amount=words.total end
             out.incomplete=out.incomplete or words.incomplete or words.missing>0
-            snapshot:note(item.label..'字数',error or (not known and '暂无字数记录' or (words.incomplete or words.missing>0) and '字数记录不完整' or nil))
-        else snapshot:note(item.label..'字数',error) end
+            snapshot:note(item.label..L('字数'),error or (not known and L('暂无字数记录') or (words.incomplete or words.missing>0) and L('字数记录不完整') or nil))
+        else snapshot:note(item.label..L('字数'),error) end
     else
         local pages,error=snapshot:pages(item.period,id)
         -- A missing native record is unknown, not a confirmed zero.
         if time and time.known>0 then out.amount=pages end
-        snapshot:note(item.label..'页数',error)
+        snapshot:note(item.label..L('页数'),error)
     end
     out.incomplete=(out.time~=nil or out.amount~=nil) and out.incomplete or false
     return out
 end
 function Inkfolio.statisticsText()
     local lines={
-        '阅读进度',
-        '当前页码与百分比表示阅读位置，跳页也会改变；不代表实际读过全部内容。估算已读为全书字数乘当前位置比例。预计剩余依据 KOReader 平均阅读速度计算。',
-        '', '字数记录',
-        '中文每字计一字，英文每单词计一字，不计标点和空白。实际记录来自可提取的正文；同次唤醒内同一内容去重，跨书累计，下次唤醒重新去重，重启 KOReader 也会开始新的会话。它表示翻阅量，不保证文字已被完整阅读。',
-        '今日、本周、本月字数从InkFolio开始记录时累计，不补录安装前的数据。全书估算字数不参与周期统计或目标；累计摘要沿用时长和页数。',
-        '', '时长与页数',
-        '来自 KOReader 阅读统计，包含其保留的安装前历史；停留时间沿用原生记录规则。页数按周期内记录的图书与页面去重，并沿用原生分页换算；各日页数相加不一定等于累计页数。',
-        '', '周期与图表',
-        '按设备本地日期：每天零点、周一和自然月划分；跨午夜时长拆分到对应日期。日均为本周期已记录时长除以截至今天的自然日数，包含今天。未来日期不参与汇总。',
-        '', '数据状态',
-        '0表示已有零值记录；—表示暂无记录或数据不可用。已记录表示统计不完整，数字仅覆盖现有记录。无记录不等于确认未读，也不等于确认数据丢失。',
-        '图表短横表示零，斜线表示无记录，圆点表示当日字数记录不完整；未来日期留空。',
-        '', '显示与选择',
-        '摘要与趋势图各最多两项，独立选择；关闭显示阅读摘要会隐藏两者，不影响阅读目标。在摘要内容中选择数字摘要，在阅读图表中选择柱状图。周期摘要指标可选择时长＋字数或时长＋页数；累计与旧本书今日保持时长与页数；升级保留原有页数选择。',
+        L('阅读进度'),
+        L('当前页码与百分比表示阅读位置，跳页也会改变；不代表实际读过全部内容。估算已读为全书字数乘当前位置比例。预计剩余依据 KOReader 平均阅读速度计算。'),
+        '', L('字数记录'),
+        L('中文每字计一字，英文每单词计一字，不计标点和空白。实际记录来自可提取的正文；同次唤醒内同一内容去重，跨书累计，下次唤醒重新去重，重启 KOReader 也会开始新的会话。它表示翻阅量，不保证文字已被完整阅读。'),
+        L('今日、本周、本月字数从InkFolio开始记录时累计，不补录安装前的数据。全书估算字数不参与周期统计或目标；累计摘要沿用时长和页数。'),
+        '', L('时长与页数'),
+        L('来自 KOReader 阅读统计，包含其保留的安装前历史；停留时间沿用原生记录规则。页数按周期内记录的图书与页面去重，并沿用原生分页换算；各日页数相加不一定等于累计页数。'),
+        '', L('周期与图表'),
+        L("按设备本地日期统计，跨午夜时长拆分到对应日期。周摘要与目标从周一开始；周图表中文从周一开始，英文从周日开始。月份按自然月划分。日均为本周期已记录时长除以截至今天的自然日数，包含今天；未来日期不参与汇总。"),
+        '', L('数据状态'),
+        L('0表示已有零值记录；—表示暂无记录或数据不可用。已记录表示统计不完整，数字仅覆盖现有记录。无记录不等于确认未读，也不等于确认数据丢失。'),
+        L('图表短横表示零，斜线表示无记录，圆点表示当日字数记录不完整；未来日期留空。'),
+        '', L('显示与选择'),
+        L('摘要与趋势图各最多两项，独立选择；关闭显示阅读摘要会隐藏两者，不影响阅读目标。在摘要内容中选择数字摘要，在阅读图表中选择柱状图。周期摘要指标可选择时长＋字数或时长＋页数；累计与旧本书今日保持时长与页数；升级保留原有页数选择。'),
     }
     local status=Inkfolio.statisticsStatus or {}
     local keys={};for label in pairs(status)do keys[#keys+1]=label end;table.sort(keys)
-    lines[#lines+1]='';lines[#lines+1]='最近一次显示的统计状态'
-    if #keys==0 then lines[#lines+1]='暂无异常状态记录；打开InkFolio 预览可更新。'
-    else for _,label in ipairs(keys)do lines[#lines+1]=label..'：'..status[label] end end
+    lines[#lines+1]='';lines[#lines+1]=L('最近一次显示的统计状态')
+    if #keys==0 then lines[#lines+1]=L('暂无异常状态记录；打开InkFolio 预览可更新。')
+    else for _,label in ipairs(keys)do lines[#lines+1]=L(label)..(Inkfolio.language()=='en_US'and ': 'or '：')..L(status[label]) end end
     return table.concat(lines,'\n')
 end
 function Inkfolio.showStatisticsHelp(parent)
-    local viewer=require('ui/widget/textviewer'):new{title='统计说明',text=Inkfolio.statisticsText(),
+    local viewer=Inkfolio.textViewer{title=L('统计说明'),text=Inkfolio.statisticsText(),
         justified=false,show_menu=false,add_default_buttons=true}
     UIManager:show(Inkfolio.refreshParentOnClose(viewer,parent))
 end
@@ -3148,30 +5321,41 @@ Inkfolio.GOAL_METRICS={{id='time',label='阅读时长'},{id='words',label='阅�
 function Inkfolio.goalConfig(value)
     if value==nil then value=G_reader_settings:readSetting(S.goal) end
     if value==nil then return {version=1,enabled=false,period='day',metric='time',values={}} end
-    assert(type(value)=='table' and value.version==1 and type(value.enabled)=='boolean' and type(value.values)=='table','阅读目标设置损坏')
+    assert(type(value)=='table' and value.version==1 and type(value.enabled)=='boolean' and type(value.values)=='table',L('阅读目标设置损坏'))
     local function validPeriod(p)return p=='day' or p=='week' or p=='month' end
     local function validMetric(m)return m=='time' or m=='words' end
-    assert(validPeriod(value.period) and validMetric(value.metric),'阅读目标周期或类型无效')
+    assert(validPeriod(value.period) and validMetric(value.metric),L('阅读目标周期或类型无效'))
     local copy={version=1,enabled=value.enabled,period=value.period,metric=value.metric,values={}}
     for key,target in pairs(value.values)do
-        assert(type(key)=='string','阅读目标设置键无效')
+        assert(type(key)=='string',L('阅读目标设置键无效'))
         local period,metric=key:match('^(%a+)_(%a+)$')
         local unit=metric=='words' and 1000 or 60
         assert(validPeriod(period) and validMetric(metric) and type(target)=='number' and target>=unit
-            and target<=9007199254740991 and target==math.floor(target) and target%unit==0,'阅读目标值无效')
+            and target<=9007199254740991 and target==math.floor(target) and target%unit==0,L('阅读目标值无效'))
         copy.values[key]=target
     end
-    assert(not copy.enabled or copy.values[copy.period..'_'..copy.metric],'请先设置目标值')
+    assert(not copy.enabled or copy.values[copy.period..'_'..copy.metric],L('请先设置目标值'))
     return copy
 end
 function Inkfolio.saveGoal(config)
     config=Inkfolio.goalConfig(config)
     local previous=G_reader_settings:readSetting(S.goal)
     G_reader_settings:saveSetting(S.goal,config)
-    local ok,reason=pcall(G_reader_settings.flush,G_reader_settings)
+    local ok,reason=pcall(function()
+        G_reader_settings:flush()
+        -- LuaSettings:flush does not propagate write errors. Verify the goal on disk.
+        local saved=dofile(assert(G_reader_settings.file,L('InkFolio 设置文件路径缺失')))
+        local message=L('阅读目标未能保存，请检查设置目录。')
+        assert(type(saved)=='table' and type(saved[S.goal])=='table',message)
+        local actual=Inkfolio.goalConfig(saved[S.goal])
+        assert(actual.enabled==config.enabled and actual.period==config.period and actual.metric==config.metric,message)
+        for key,value in pairs(config.values)do assert(actual.values[key]==value,message)end
+        for key,value in pairs(actual.values)do assert(config.values[key]==value,message)end
+    end)
     if not ok then
         if previous==nil then G_reader_settings:delSetting(S.goal) else G_reader_settings:saveSetting(S.goal,previous) end
-        error(reason)
+        logger.warn('InkFolio goal save failed',reason)
+        return false,L('阅读目标未能保存，请检查设置目录。')
     end
     if refreshQuicklook then refreshQuicklook() end
     return true
@@ -3179,36 +5363,40 @@ end
 function Inkfolio.setGoal(field,value)
     local config=Inkfolio.goalConfig()
     if field=='target' then config.values[config.period..'_'..config.metric]=value
-    else assert(field=='period' or field=='metric' or field=='enabled','阅读目标选项无效');config[field]=value end
+    else assert(field=='period' or field=='metric' or field=='enabled',L('阅读目标选项无效'));config[field]=value end
     if field~='enabled' and not config.values[config.period..'_'..config.metric] then config.enabled=false end
-    return Inkfolio.saveGoal(config)
+    local ok,reason=Inkfolio.saveGoal(config)
+    if not ok then Inkfolio.message(reason)end
+    return ok,reason
 end
 function Inkfolio.parseGoalTarget(text,metric)
     text=util.trim(tostring(text or ''))
     if metric=='time' then
-        if not text:match('^%d+$') then return nil,'请输入大于0的整数分钟。' end
+        if not text:match('^%d+$') then return nil,L('请输入大于0的整数分钟。') end
     elseif metric=='words' then
-        if not text:match('^%d+$') and not text:match('^%d+%.%d$') then return nil,'请以万字输入，最多保留一位小数，例如2.5。' end
-    else return nil,'阅读目标类型无效' end
+        if Inkfolio.language()=='en_US'then
+            if not text:match('^%d+$')then return nil,L('请以万字输入，最多保留一位小数，例如2.5。')end
+        elseif not text:match('^%d+$')and not text:match('^%d+%.%d$')then return nil,'请以万字输入，最多保留一位小数，例如2.5。'end
+    else return nil,L('阅读目标类型无效') end
     local number=tonumber(text)
-    local target=number and number*(metric=='words' and 10000 or 60)
-    if not target or target<1 or target>9007199254740991 then return nil,'目标值必须大于0且在有效范围内。' end
+    local target=number and number*(metric=='words'and (Inkfolio.language()=='en_US'and 1000 or 10000)or 60)
+    if not target or target<1 or target>9007199254740991 then return nil,L('目标值必须大于0且在有效范围内。') end
     target=math.floor(target+.5)
-    if target%(metric=='words' and 1000 or 60)~=0 then return nil,'阅读目标精度无效。' end
+    if target%(metric=='words' and 1000 or 60)~=0 then return nil,L('阅读目标精度无效。') end
     return target
 end
 function Inkfolio.goalTargetText(config)
     config=config or Inkfolio.goalConfig()
     local target=config.values[config.period..'_'..config.metric]
-    if not target then return '未设置' end
-    return config.metric=='words' and string.format('%.1f万字',target/10000) or duration(target)
+    if not target then return L('未设置') end
+    return config.metric=='words'and (Inkfolio.language()=='en_US'and formatWordCount(target)or string.format('%.1f万字',target/10000))or duration(target)
 end
 function Inkfolio.goalSnapshot(ui,now,snapshot)
     local config=Inkfolio.goalConfig()
     if not config.enabled then return nil end
     local period
     for _,item in ipairs(Inkfolio.GOAL_PERIODS)do if item.id==config.period then period=item.title end end
-    local goal={title=period..'阅读目标',
+    local goal={title=Inkfolio.language()=='en_US'and (period..' · Reading Goal')or period..L('阅读目标'),
         target=config.values[config.period..'_'..config.metric],target_text=Inkfolio.goalTargetText(config),config=config}
     local chart,reason
     if config.metric=='words' then
@@ -3224,7 +5412,10 @@ function Inkfolio.goalSnapshot(ui,now,snapshot)
     for _,day in ipairs(chart.days)do
         if not day.future and (config.metric=='words' and day.words~=nil or config.metric=='time' and day.seconds~=nil) then known=known+1 end
     end
-    if known==0 then goal.reason='暂无'..(config.metric=='words' and '字数' or '时长')..'记录';return goal end
+    if known==0 then
+        goal.reason=Inkfolio.language()=='en_US'and (config.metric=='words'and 'No words recorded'or 'No reading time recorded')or '暂无'..(config.metric=='words'and '字数'or '时长')..'记录'
+        return goal
+    end
     goal.amount=chart.total;goal.percent=math.floor(goal.amount/goal.target*100)
     goal.incomplete=(chart.missing or 0)>0 or chart.incomplete==true
     goal.amount_text=config.metric=='words' and formatWordCount(goal.amount) or duration(goal.amount)
@@ -3235,14 +5426,17 @@ function Inkfolio.editGoalTarget(parent)
     local target=config.values[key];local words=config.metric=='words'
     local dialog
     dialog=require('ui/widget/inputdialog'):new{
-        title=words and '阅读字数目标（万字）' or '阅读时长目标（分钟）',
-        input=target and (words and string.format('%.1f',target/10000) or string.format('%.0f',target/60)) or '',
-        description=words and '例如2.5代表2.5万字；以0.1万字为单位。' or '请输入大于0的整数分钟。',
-        input_type='number',buttons={{{text='取消',callback=function()UIManager:close(dialog)end},
-            {text='保存',is_enter_default=true,callback=function()
+        title=words and L('阅读字数目标（万字）') or L('阅读时长目标（分钟）'),
+        input=target and (words and (Inkfolio.language()=='en_US'and string.format('%.0f',target/1000)or string.format('%.1f',target/10000)) or string.format('%.0f',target/60)) or '',
+        description=words and L('例如2.5代表2.5万字；以0.1万字为单位。') or L('请输入大于0的整数分钟。'),
+        input_type='number',buttons={{{text=L('取消'),callback=function()UIManager:close(dialog)end},
+            {text=L('保存'),is_enter_default=true,callback=function()
                 local value,reason=Inkfolio.parseGoalTarget(dialog:getInputText(),config.metric)
                 if not value then Inkfolio.message(reason);return end
-                config.values[key]=value;Inkfolio.saveGoal(config);UIManager:close(dialog)
+                config.values[key]=value
+                local ok,reason=Inkfolio.saveGoal(config)
+                if not ok then Inkfolio.message(reason);return end
+                UIManager:close(dialog)
             end}}}}
     UIManager:show(Inkfolio.refreshParentOnClose(dialog,parent));dialog:onShowKeyboard()
 end
@@ -3261,21 +5455,232 @@ function Inkfolio.goalMenu()
             callback=function()Inkfolio.setGoal('metric',id)end}
     end
     return {
-        {text='启用阅读目标',keep_menu_open=true,
-            help_text='先选择周期、类型并填写目标值，再启用。切换到尚未设置的组合时自动停用；各组合的目标值分别保存。',
+        {text=L('启用阅读目标'),keep_menu_open=true,
+            help_text=L('先选择周期、类型并填写目标值，再启用。切换到尚未设置的组合时自动停用；各组合的目标值分别保存。'),
             checked_func=function()return Inkfolio.goalConfig().enabled end,
             enabled_func=function()local c=Inkfolio.goalConfig();return c.values[c.period..'_'..c.metric]~=nil end,
             callback=function()Inkfolio.setGoal('enabled',not Inkfolio.goalConfig().enabled)end},
-        {text='目标周期',help_text='按设备本地时间计算：每天零点、每周一零点及自然月月初开始新周期。',sub_item_table=periods},
-        {text='目标类型',help_text='统计全局阅读量。时长沿用KOReader阅读统计；字数按实际翻阅记录，同次唤醒去重，不补录历史字数。',sub_item_table=metrics},
-        {text='目标值',text_func=function()return '目标值：'..Inkfolio.goalTargetText()end,callback=Inkfolio.editGoalTarget},
+        {text=L('目标周期'),help_text=L('按设备本地时间计算：每天零点、每周一零点及自然月月初开始新周期。'),sub_item_table=periods},
+        {text=L('目标类型'),help_text=L('统计全局阅读量。时长沿用KOReader阅读统计；字数按实际翻阅记录，同次唤醒去重，不补录历史字数。'),sub_item_table=metrics},
+        {text=L('目标值'),text_func=function()return L('目标值：')..Inkfolio.goalTargetText()end,callback=Inkfolio.editGoalTarget},
     }
 end
 
+local CoverScene=WidgetContainer:extend{}
+-- Sample only the visible background just outside the card, before drawing it.
+-- Mean gray >= 150 selects the dark card; the D16 palette is unchanged.
+function Inkfolio.cardBackground(image,cover_rect,card_rect,background,sw,sh,band,step)
+    local sum,count=0,0
+    for y=math.max(0,card_rect.y-band),math.min(sh-1,card_rect.y+card_rect.h+band-1),step do
+        for x=math.max(0,card_rect.x-band),math.min(sw-1,card_rect.x+card_rect.w+band-1),step do
+            if x<card_rect.x or x>=card_rect.x+card_rect.w or y<card_rect.y or y>=card_rect.y+card_rect.h then
+                local color=background
+                if cover_rect and x>=cover_rect.x and x<cover_rect.x+cover_rect.w
+                    and y>=cover_rect.y and y<cover_rect.y+cover_rect.h then
+                    color=image:getPixel(x-cover_rect.x,y-cover_rect.y)
+                end
+                sum=sum+color:getColor8().a;count=count+1
+            end
+        end
+    end
+    assert(count>0,L('InkFolio: 卡片周边没有可检测区域'))
+    return sum/count>=150 and 'black' or 'white'
+end
+function CoverScene:getSize()return Geom:new{w=self.screen_w,h=self.screen_h}end
+function CoverScene:paintTo(bb,x,y)
+    self.dimen=Geom:new{x=x,y=y,w=self.screen_w,h=self.screen_h}
+    bb:paintRect(x,y,self.screen_w,self.screen_h,self.background)
+    if self[2]then
+        local size=self[2]:getSize()
+        local cy=self.cover_missing and self.top_gap or math.floor((self.screen_h-size.h)/2)
+        self[2]:paintTo(bb,x+math.floor((self.screen_w-size.w)/2),y+cy)
+    end
+    local size=self[1]:getSize()
+    self[1]:paintTo(bb,x+math.floor((self.screen_w-size.w)/2),y+math.floor((self.screen_h-size.h)/2))
+end
+function Inkfolio.renderCover(ui,state,appearance)
+    appearance=appearance or {}
+    local theme=Inkfolio.uiStyle({ui_style='cover'})
+    local sw,sh=Screen:getWidth(),Screen:getHeight()
+    local fraction=appearance.card_width or G_reader_settings:readSetting(S.card_width) or .50
+    local font_scale=appearance.card_font or G_reader_settings:readSetting(S.card_font) or 1
+    assert(type(fraction)=='number' and fraction>=.4 and fraction<=.85,L('InkFolio: 卡片宽度无效'))
+    assert(type(font_scale)=='number' and font_scale>=.8 and font_scale<=1.2,L('InkFolio: 卡片字号无效'))
+    local background=appearance.cover_background or G_reader_settings:readSetting(S.cover_background) or 'white'
+    assert(background=='white' or background=='black',L('InkFolio: 封面底色无效'))
+    local card_background=appearance.card_background or G_reader_settings:readSetting(S.card_background)or 'auto'
+    assert(card_background=='auto'or card_background=='white'or card_background=='black',L('InkFolio: 卡片底色无效'))
+    local card_width=math.floor(sw*fraction)
+    local unit=card_width/720
+    local function px(n)return math.max(1,math.floor(n*unit+.5))end
+    local function f(n)return math.max(1,math.floor(n*font_scale*card_width/Screen:scaleBySize(720)+.5))end
+    local font_error=Inkfolio.uiFontError(theme,f(24));assert(not font_error,font_error)
+    local pad,border=px(theme.padding),math.max(1,px(1))
+    local width=card_width-2*(pad+border)
+    local text_widgets,weather_icons={},{}
+    local function txt(value,role,w,align)
+        local style=assert(theme.type[role],L('InkFolio: 未知文字层级'))
+        local italic=role=='book'and Inkfolio.language()=='en_US'and tostring(value):find('[A-Za-z]')and not util.hasCJKChar(tostring(value))
+        local face=italic and 'NotoSerif-Italic.ttf'or theme.fonts.body
+        local widget=TextBoxWidget:new{text=tostring(value),face=assert(Font:getFace(face,f(style.size))),
+            bold=not italic and style.bold==true,width=w or width,alignment=align or 'left',justified=false,line_height=.3,
+            fgcolor=style.muted and Blitbuffer.COLOR_GRAY_3 or Blitbuffer.COLOR_BLACK}
+        text_widgets[#text_widgets+1]=widget
+        return widget
+    end
+    local function measured(value,role)
+        local style=theme.type[role];local t=TextWidget:new{text=value,face=Font:getFace(theme.fonts.body,f(style.size)),bold=style.bold,padding=0}
+        local w=t:getSize().w;t:free();return w
+    end
+    local function baseline(...)
+        local children={...};local top=0
+        for _,child in ipairs(children)do if child.getBaseline then top=math.max(top,child:getBaseline())end end
+        for i,child in ipairs(children)do if child.getBaseline and child:getBaseline()<top then
+            children[i]=VerticalGroup:new{VerticalSpan:new{width=top-child:getBaseline()},child}
+        end end
+        return HorizontalGroup:new{align='top',unpack(children)}
+    end
+    local function gap(n)return HorizontalSpan:new{width=px(n)}end
+    local elements={}
+    local function add(widget,space)
+        elements[#elements+1]=widget
+        if space then elements[#elements+1]=VerticalSpan:new{width=px(space)}end
+    end
+    local function row(label,value)
+        local lw=math.floor(width*.36)
+        return baseline(txt(label,'label',lw),gap(12),txt(value,'text',width-lw-px(12),'right'))
+    end
+    local book=extractBook(ui.doc_props,ui.document.file)
+    if ui==ReaderUI.instance then Inkfolio.observeWords(ui)end
+    local snapshot=Inkfolio.statisticsSnapshot(ui);Inkfolio.statisticsStatus=snapshot.statuses
+    local page,total,pct=Inkfolio.readingPosition(ui,state)
+    add(txt(displayTitle(book.title),'book'),8)
+    add(txt(book.authors~='' and book.authors or L('未提供作者'),'body'),24)
+    local chapter
+    if ui.toc and ui.toc.getTocTitleByPage then
+        local ok,value=pcall(ui.toc.getTocTitleByPage,ui.toc,tonumber(state and state.page)or 1)
+        assert(ok,L('InkFolio: 章节读取失败：')..tostring(value));chapter=value
+    end
+    add(txt(chapter and chapter~='' and chapter or L('暂无章节信息'),'body'),14)
+    local pw=math.floor(width*.36)
+    add(baseline(txt(pct..'%','percentage',pw),gap(12),txt(Inkfolio.pagePosition(page,total),'body',width-pw-px(12),'right')),10)
+    local progress=ProgressWidget:new{width=width,height=px(7),percentage=page/total,radius=0,bordersize=0,margin_v=0,margin_h=0,
+        bgcolor=Blitbuffer.COLOR_GRAY_9,fillcolor=Blitbuffer.COLOR_BLACK}
+    add(progress,18)
+    if Inkfolio.progressEnabled(S.word_book)then
+        local value,reason=Inkfolio.estimatedWords(ui,page/total);snapshot:note(L('估算已读'),reason)
+        add(row(L('估算已读'),value and formatWordCount(value)or '—'),6)
+    end
+    if Inkfolio.progressEnabled(S.word_session)then
+        local value,reason=Inkfolio.wakeWords(ui);snapshot:note(L('本次唤醒'),reason)
+        add(row(L('本次唤醒'),value and formatWordCount(value)or '—'),6)
+    end
+    if Inkfolio.progressEnabled(S.remain)then
+        local avg=ui.statistics and tonumber(ui.statistics.avg_time)
+        add(row(L('预计剩余'),avg and avg>0 and duration((total-page)*avg)or '—'),6)
+    end
+    local summaries=enabled(S.stats)and summaryItems()or {}
+    if #summaries>0 then
+        add(VerticalSpan:new{width=px(16)})
+        local spacing=px(22);local half=math.floor((width-spacing)/2)
+        local function block(item,w)
+            local values=Inkfolio.summaryData(snapshot,item)
+            local amount=values.amount~=nil and (Inkfolio.summaryAmount(values.amount,values.metric))or '—'
+            return VerticalGroup:new{align='left',txt(item.label..(values.incomplete and L(' · 已记录')or ''),'subheading',w),
+                VerticalSpan:new{width=px(8)},txt(duration(values.time),'value',w),VerticalSpan:new{width=px(4)},
+                txt((values.metric=='words'and L('字数 ')or L('页数 '))..amount,'body',w)}
+        end
+        if #summaries==1 then add(block(summaries[1],width),14)
+        else
+            local first,second=block(summaries[1],half),block(summaries[2],half)
+            for _,index in ipairs({1,3,5})do
+                local height=math.max(first[index]:getSize().h,second[index]:getSize().h)
+                for _,column in ipairs({first,second})do
+                    local extra=height-column[index]:getSize().h
+                    if extra>0 then column[index]=VerticalGroup:new{column[index],VerticalSpan:new{width=extra}}end
+                end
+            end
+            add(HorizontalGroup:new{align='top',first,HorizontalSpan:new{width=width-2*half},second},14)
+        end
+    end
+    local date=enabled(S.date)and Inkfolio.displayDate(snapshot.now)or nil
+    local choice=Inkfolio.coverWeather()
+    local weather=choice~='off'and weatherText(choice=='today'and 0 or 1)or nil
+    if date or weather then
+        add(VerticalSpan:new{width=px(10)})
+        if date and weather then
+            local dw=math.ceil(measured(date,'header'))+1
+            add(baseline(Inkfolio.weatherWidget(choice=='today'and 0 or 1,true,txt,width-dw-px(16),'left',px(24),weather_icons),gap(16),txt(date,'header',dw,'right')))
+        elseif date then add(txt(date,'header',width,'right'))
+        else add(Inkfolio.weatherWidget(choice=='today'and 0 or 1,true,txt,width,'left',px(24),weather_icons))end
+    end
+    local card=FrameContainer:new{padding=pad,bordersize=border,color=Blitbuffer.COLOR_GRAY_3,
+        radius=px(24),background=Blitbuffer.COLOR_WHITE,VerticalGroup:new{align='left',unpack(elements)}}
+    local cs=card:getSize();local valid=cs.w<=sw and cs.h<=sh-px(24)
+    if not appearance.measure_only and not valid then
+        card:free()
+        return CenterContainer:new{dimen=Screen:getSize(),TextBoxWidget:new{text=L('信息卡内容超出屏幕，请调整卡片宽度、字号或显示项目。'),
+            face=Font:getFace('cfont',f(22)),width=math.floor(sw*.8),alignment='center',justified=false}}
+    end
+    local cover,missing,cover_rect,cover_image
+    if ui.bookinfo then
+        local doc=not ui.file_cover and ui.document or nil
+        local ok,bb=pcall(ui.bookinfo.getCoverImage,ui.bookinfo,doc,ui.file_cover and ui.document.file or nil)
+        if not ok then card:free();error(L('InkFolio: 封面读取失败：')..tostring(bb))end
+        if bb then
+            local scale=math.min(sw/bb:getWidth(),sh/bb:getHeight())
+            local cw,ch=math.max(1,math.floor(bb:getWidth()*scale)),math.max(1,math.floor(bb:getHeight()*scale))
+            if cw~=bb:getWidth()or ch~=bb:getHeight()then bb=RenderImage:scaleBlitBuffer(bb,cw,ch,true)end
+            cover=ImageWidget:new{image=bb,width=cw,height=ch,image_disposable=true}
+            cover_image=bb
+            cover_rect={x=math.floor((sw-cw)/2),y=math.floor((sh-ch)/2),w=cw,h=ch}
+        end
+    end
+    if not cover then
+        missing=true;cover=TextWidget:new{text=L('封面不可用'),face=Font:getFace('cfont',f(20)),
+            fgcolor=background=='black'and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK}
+    end
+    local background_color=background=='black'and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_WHITE
+    local card_rect={x=math.floor((sw-cs.w)/2),y=math.floor((sh-cs.h)/2),w=cs.w,h=cs.h}
+    if card_background=='auto'then
+        card_background=Inkfolio.cardBackground(cover_image,cover_rect,card_rect,background_color,sw,sh,
+            px(UI_LAYOUT.card_sample_band),px(UI_LAYOUT.card_sample_step))
+    end
+    if card_background=='black'then
+        card.background=theme.card_dark;card.color=card.color:invert()
+        for _,icon in ipairs(weather_icons)do icon:setDark()end
+        progress.bgcolor=progress.bgcolor:invert();progress.fillcolor=Blitbuffer.COLOR_WHITE
+        for _,widget in ipairs(text_widgets)do
+            widget.bgcolor=theme.card_dark;widget.fgcolor=widget.fgcolor:invert();widget:update()
+        end
+    end
+    local scene=CoverScene:new{screen_w=sw,screen_h=sh,background=background_color,card_background=card_background,background_style='cover',
+        cover_missing=missing,cover_rect=cover_rect,top_gap=px(20),card_rect=card_rect,card,cover}
+    if appearance.measure_only then return scene,true,{width=cs.w,height=cs.h,screen_w=sw,screen_h=sh}end
+    return scene,true
+end
+function Inkfolio.pagePosition(page,total)
+    if Inkfolio.language()=='en_US'then return string.format(total==1 and '%d / %d page'or '%d / %d pages',page,total)end
+    return string.format('%d / %d 页',page,total)
+end
+
+function Inkfolio.readingPosition(ui,state)
+    local doc=(ui.doc_settings and ui.doc_settings.data) or {}
+    local page=tonumber(state and state.page) or 1
+    local total=math.max(1,tonumber(ui.file_cover and doc.doc_pages or ui.document:getPageCount()) or 1)
+    page=math.max(1,math.min(page,total))
+    if ui.pagemap and ui.pagemap.wantsPageLabels and ui.pagemap:wantsPageLabels() then
+        local _,idx,count=ui.pagemap:getCurrentPageLabel(true)
+        if idx and count and count>0 then page,total=idx,count end
+    end
+    local pct=math.floor(page*100/total+0.5)
+    return page,total,pct
+end
 local function renderReceipt(ui, state, appearance)
     if not ui or not ui.document then return nil end
     appearance=appearance or {}
     local theme=Inkfolio.uiStyle(appearance)
+    if Inkfolio.isCardStyle(appearance)then return Inkfolio.renderCover(ui,state,appearance) end
     local factor=tonumber(appearance.width or G_reader_settings:readSetting(S.width)) or 0.72
     local scaler=tonumber(appearance.font or G_reader_settings:readSetting(S.font)) or 1
     local scale=tonumber(appearance.scale or G_reader_settings:readSetting(S.scale)) or 1
@@ -3296,12 +5701,12 @@ local function renderReceipt(ui, state, appearance)
     local styles=theme.type
     local function faceFor(style) return Font:getFace(theme.fonts[style.font or 'body'],f(style.size)) end
     local function txt(value,role,width,align,lines)
-        local style=assert(styles[role],'未知文字层级')
+        local style=assert(styles[role],L('未知文字层级'))
         local face=faceFor(style)
         local widget=TextBoxWidget:new{
             text=tostring(value or ''),face=face,bold=style.bold==true,
             width=math.max(1,math.floor(width or w)),
-            alignment=align or 'left',fgcolor=role=='small' and Blitbuffer.COLOR_GRAY_3 or Blitbuffer.COLOR_BLACK,
+            alignment=align or 'left',fgcolor=style.muted and Blitbuffer.COLOR_GRAY_3 or Blitbuffer.COLOR_BLACK,
             justified=false,line_height=0.3,
             height=lines and math.floor(face.size*1.3+0.5)*lines or nil,
             height_overflow_show_ellipsis=lines~=nil,height_adjust=lines~=nil,
@@ -3310,13 +5715,13 @@ local function renderReceipt(ui, state, appearance)
     end
     local heading=txt
     local function textWidth(value,role)
-        local style=assert(styles[role],'未知文字层级')
+        local style=assert(styles[role],L('未知文字层级'))
         local t=TextWidget:new{text=tostring(value),face=faceFor(style),bold=style.bold,padding=0}
         local width=t:getSize().w;t:free();return width
     end
     -- A four-unit vertical rhythm, scaled with the whole layout.
     local function vg(n)
-        if n>0 and theme.rhythm then n=math.max(theme.rhythm,math.floor(n/theme.rhythm+.5)*theme.rhythm) end
+        if n>0 then n=math.max(UI_LAYOUT.rhythm,math.floor(n/UI_LAYOUT.rhythm+.5)*UI_LAYOUT.rhythm) end
         return VerticalSpan:new{width=n>0 and px(n) or 0}
     end
     local function hg(n) return HorizontalSpan:new{width=n>0 and px(n) or 0} end
@@ -3334,6 +5739,31 @@ local function renderReceipt(ui, state, appearance)
         end
         return HorizontalGroup:new{align='top',unpack(children)}
     end
+    -- Different fonts have different ink heights even on the same baseline.
+    -- Align the visible first-line glyph centres; wrapped text grows downwards.
+    local function headerRow(...)
+        local children={...};local centres={};local centre=0
+        for i,widget in ipairs(children)do
+            if widget.inkfolio_weather then
+                centres[i]=widget.inkfolio_center;centre=math.max(centre,centres[i])
+            elseif widget.getBaseline then
+                local text=widget.text and widget or widget[1]
+                local line=assert(text.vertical_string_list[1],L('InkFolio: 顶栏文字缺少首行'))
+                local chars=util.splitToChars(text.text)
+                local first=table.concat(chars,'',line.offset,line.end_offset)
+                local bounds=require('ui/rendertext'):sizeUtf8Text(0,false,text.face,first,true,text.bold)
+                centres[i]=widget:getBaseline()+(bounds.y_bottom-bounds.y_top)/2
+                centre=math.max(centre,centres[i])
+            end
+        end
+        for i,widget in ipairs(children)do
+            if centres[i]then
+                local offset=math.floor(centre-centres[i]+.5)
+                if offset>0 then children[i]=VerticalGroup:new{VerticalSpan:new{width=offset},widget}end
+            end
+        end
+        return HorizontalGroup:new{align='top',unpack(children)}
+    end
     local function rule(kind) return PrintRule:new{theme=theme,width=w,height=kind=='solid' and px(theme.id=='swiss' and 2 or 1) or line_width,kind=kind or 'dash',scale=scale} end
     local elements={}
     local function add(widget,space)
@@ -3345,21 +5775,40 @@ local function renderReceipt(ui, state, appearance)
     if ui==ReaderUI.instance then Inkfolio.observeWords(ui) end
     local snapshot=Inkfolio.statisticsSnapshot(ui)
     Inkfolio.statisticsStatus=snapshot.statuses
-    local doc=(ui.doc_settings and ui.doc_settings.data) or {}
-    local page=tonumber(state and state.page) or 1
-    local total=math.max(1,tonumber(ui.file_cover and doc.doc_pages or ui.document:getPageCount()) or 1)
-    page=math.max(1,math.min(page,total))
-    if ui.pagemap and ui.pagemap.wantsPageLabels and ui.pagemap:wantsPageLabels() then
-        local _,idx,count=ui.pagemap:getCurrentPageLabel(true)
-        if idx and count and count>0 then page,total=idx,count end
-    end
-    local pct=math.floor(page*100/total+0.5)
+    local page,total,pct=Inkfolio.readingPosition(ui,state)
 
-    -- Date and brand share one baseline; the date ends at the content edge.
-    local date_text=os.date('%Y.%m.%d',snapshot.now)
-    local date_width=math.ceil(textWidth(date_text,'text'))+1
-    add(baselineRow(heading('INKFOLIO','brand',w-date_width-px(12),'left',1),hg(12),
-        txt(date_text,'text',date_width,'right',1)),12)
+    -- Single-day weather retains the original top row. Two days share a new
+    -- measured row; symmetric side columns keep today's forecast truly centered.
+    local date_text=enabled(S.date) and Inkfolio.displayDate(snapshot.now) or nil
+    local brand_width=math.ceil(textWidth('INKFOLIO','brand'))+1
+    local date_width=date_text and math.ceil(textWidth(date_text,'header'))+1 or 0
+    local today_weather,tomorrow_weather=Inkfolio.weatherSelected(0,appearance),Inkfolio.weatherSelected(1,appearance)
+    if today_weather and tomorrow_weather then
+        if date_text then
+            add(headerRow(heading('INKFOLIO','brand',brand_width,'left'),hg(12),
+                txt(date_text,'header',w-brand_width-px(12),'right')),UI_LAYOUT.heading)
+        else add(heading('INKFOLIO','brand',w,'left'),UI_LAYOUT.heading) end
+        local city=selectedWeatherCity()
+        local name=city and cityLabel(city) or L('未选择城市')
+        local tomorrow=weatherText(1,false)
+        local gap=px(12)
+        local side=math.min(math.max(textWidth(name,'header'),textWidth(tomorrow,'header')),
+            math.floor((w-2*gap)/3))
+        add(baselineRow(txt(name,'header',side,'left'),hg(12),
+            Inkfolio.weatherWidget(0,false,txt,w-2*(side+gap),'center',px(24)),hg(12),
+            Inkfolio.weatherWidget(1,false,txt,side,'right',px(24))),12)
+    elseif Inkfolio.weatherEnabled(appearance) and date_text then
+        local side=math.max(brand_width,date_width)
+        local gap=px(12)
+        add(headerRow(heading('INKFOLIO','brand',side,'left'),hg(12),
+            Inkfolio.weatherWidget(today_weather and 0 or 1,true,txt,w-2*(side+gap),'center',px(24)),hg(12),
+            txt(date_text,'header',side,'right')),12)
+    elseif Inkfolio.weatherEnabled(appearance) or date_text then
+        add(headerRow(heading('INKFOLIO','brand',brand_width,'left'),hg(12),
+            (date_text and txt(date_text,'header',w-brand_width-px(12),'right')or Inkfolio.weatherWidget(today_weather and 0 or 1,true,txt,w-brand_width-px(12),'right',px(24)))),12)
+    else
+        add(heading('INKFOLIO','brand',w,'left'),12)
+    end
     add(rule(theme.id=='classic' and 'dash' or 'solid'),12)
 
     -- Book details and a two-row goal share the left column; cover stays proportional.
@@ -3382,37 +5831,37 @@ local function renderReceipt(ui, state, appearance)
     local detailw=w-(cover and (coverw+px(14)) or 0)
     local desc={heading(displayTitle(book.title),'book',detailw,'left',2),vg(7)}
     local function metadata(label,value)
-        local labelw=px(78)
+        local labelw=Inkfolio.language()=='en_US'and math.min(math.ceil(textWidth(label,'label'))+1,math.floor(detailw*.35))or px(78)
         return baselineRow(heading(label,'label',labelw,'left',1),hg(7),
             txt(value,'body',detailw-labelw-px(7),'left',2))
     end
     if book.authors~='' then
-        desc[#desc+1]=metadata('作者',book.authors)
+        desc[#desc+1]=metadata(L('作者'),book.authors)
         desc[#desc+1]=vg(4)
     end
     if book.publisher~='' then
-        desc[#desc+1]=metadata('出版社',book.publisher)
+        desc[#desc+1]=metadata(L('出版社'),book.publisher)
         desc[#desc+1]=vg(4)
     end
     if enabled(S.score) then
-        local mark=cache and (scoreStars(cache.rating)..'  '..string.format('%.1f/10',cache.rating)) or '暂无评分'
-        desc[#desc+1]=txt(mark,cache and 'value' or 'body',detailw,'left',1)
-        if cache and (cache.score_kind=='volumes' or cache.score_kind=='versions') then desc[#desc+1]=vg(3);desc[#desc+1]=txt(cache.score_kind=='volumes' and '已匹配分册均分' or '已匹配版本均分','body',detailw,'left',1) end
+        local mark=cache and (scoreStars(cache.rating)..'  '..string.format('%.1f/10',cache.rating)) or L('暂无评分')
+        desc[#desc+1]=txt(mark,'body',detailw,'left',1)
+        if cache and (cache.score_kind=='volumes' or cache.score_kind=='versions') then desc[#desc+1]=vg(3);desc[#desc+1]=txt(cache.score_kind=='volumes' and L('已匹配分册均分') or L('已匹配版本均分'),'body',detailw,'left',1) end
     end
     local info=VerticalGroup:new{align='left',unpack(desc)}
     local goal=Inkfolio.goalSnapshot(ui,snapshot.now,snapshot)
     local target
     if goal then
-        snapshot:note(goal.title,goal.reason or (goal.incomplete and '记录不完整' or nil))
+        snapshot:note(goal.title,goal.reason or (goal.incomplete and L('记录不完整') or nil))
         local percent=goal.amount~=nil and string.format('%.0f%%',goal.percent) or '—'
         local amount=goal.amount~=nil and (goal.amount_text..' / '..goal.target_text)
-            or ('目标 '..goal.target_text)
+            or (L('目标 ')..goal.target_text)
         local percent_width=math.ceil(textWidth(percent,'value'))+1
         local title
         if goal.incomplete then
-            local marker_width=math.ceil(textWidth('已记录','small'))+1
+            local marker_width=math.ceil(textWidth(L('已记录'),'small'))+1
             title=baselineRow(heading(goal.title,'module',detailw-marker_width-px(8),'left'),hg(8),
-                txt('已记录','small',marker_width,'right'))
+                txt(L('已记录'),'small',marker_width,'right'))
         else title=heading(goal.title,'module',detailw,'left') end
         target=VerticalGroup:new{align='left',title,vg(3),
             baselineRow(txt(percent,'value',percent_width,'left'),hg(8),
@@ -3434,9 +5883,9 @@ local function renderReceipt(ui, state, appearance)
     local valw=w-keyw-px(12)
     local function row(key,value,key_role,value_role)
         return baselineRow(heading(key,key_role or 'label',keyw,'left'),hg(12),
-            txt(value,value_role or 'value',valw,'right'))
+            txt(value,value_role or 'text',valw,'right'))
     end
-    add(row('阅读进度',tostring(pct)..'%','section','percentage'),8)
+    add(row(Inkfolio.language()=='en_US'and 'Progress'or L('阅读进度'),tostring(pct)..'%','section','percentage'),8)
     if theme.id=='pixel' then
         add(PixelProgress:new{width=w,height=px(12),percentage=page/total,gap=px(4),stroke=px(2)},9)
     else
@@ -3448,21 +5897,21 @@ local function renderReceipt(ui, state, appearance)
         local ok,value=pcall(ui.toc.getTocTitleByPage,ui.toc,tonumber(state and state.page) or 1)
         if ok then chapter=value end
     end
-    add(row('章节',chapter and chapter~='' and chapter or '—','label','body'),4)
-    add(row('当前页码',string.format('%d / %d 页',page,total)),4)
+    add(row(L('章节'),chapter and chapter~='' and chapter or '—','label','body'),4)
+    add(row(L('当前页码'),Inkfolio.pagePosition(page,total)),4)
     if Inkfolio.progressEnabled(S.word_book) then
         local amount,reason=Inkfolio.estimatedWords(ui,page/total)
-        snapshot:note('估算已读',reason)
-        add(row('估算已读',amount and formatWordCount(amount) or '—'),4)
+        snapshot:note(L('估算已读'),reason)
+        add(row(L('估算已读'),amount and formatWordCount(amount) or '—'),4)
     end
     if Inkfolio.progressEnabled(S.word_session) then
         local amount,reason=Inkfolio.wakeWords(ui)
-        snapshot:note('本次唤醒',reason)
-        add(row('本次唤醒',amount and formatWordCount(amount) or '—'),4)
+        snapshot:note(L('本次唤醒'),reason)
+        add(row(L('本次唤醒'),amount and formatWordCount(amount) or '—'),4)
     end
     if Inkfolio.progressEnabled(S.remain) then
         local avg=ui.statistics and tonumber(ui.statistics.avg_time)
-        add(row('预计剩余',avg and avg>0 and duration((total-page)*avg) or '—'),4)
+        add(row(L('预计剩余'),avg and avg>0 and duration((total-page)*avg) or '—'),4)
     end
 
     local notch_clearance
@@ -3479,8 +5928,8 @@ local function renderReceipt(ui, state, appearance)
     local charts=Inkfolio.chartItems()
     local show_curve=#charts>0
     if enabled(S.stats) and (#summaries>0 or show_curve) then
-        add(rule('dash'),5)
-        add(heading('阅读摘要','section',w,theme.summary_align,1),5)
+        add(rule('dash'),UI_LAYOUT.heading)
+        add(heading(L('阅读摘要'),'section',w,theme.summary_align,1),UI_LAYOUT.heading)
         local summary_gap=px(10)*2+line_width
         local half=math.floor((w-summary_gap)/2)
         local summary_tail=w-summary_gap-half*2
@@ -3488,14 +5937,14 @@ local function renderReceipt(ui, state, appearance)
             local values=Inkfolio.summaryData(snapshot,item)
             local kw=math.floor(width*.30)
             local rw=width-kw-px(8)
-            local amount=values.amount~=nil and (values.metric=='words' and formatWordCount(values.amount) or (values.amount..'页')) or '—'
-            local marker_width=math.max(35,textWidth('已记录','small'))
+            local amount=values.amount~=nil and (Inkfolio.summaryAmount(values.amount,values.metric)) or '—'
+            local marker_width=math.max(35,textWidth(L('已记录'),'small'))
             local header=baselineRow(heading(item.label,'subheading',width-marker_width-px(4),'left'),hg(4),
-                txt(values.incomplete and '已记录' or '', 'small',marker_width,'right'))
+                txt(values.incomplete and L('已记录') or '', 'small',marker_width,'right'))
             return VerticalGroup:new{header,vg(5),
-                baselineRow(heading('时长','label',kw,'left'),hg(8),
+                baselineRow(heading(L('时长'),'label',kw,'left'),hg(8),
                     txt(duration(values.time),'value',rw,'right')),vg(4),
-                baselineRow(heading(values.metric=='words' and '字数' or '页数','label',kw,'left'),hg(8),
+                baselineRow(heading(values.metric=='words' and L('字数') or L('页数'),'label',kw,'left'),hg(8),
                     txt(amount,'body',rw,'right')),
             }
         end
@@ -3518,19 +5967,19 @@ local function renderReceipt(ui, state, appearance)
             },5)
         end
         for chart_index,item in ipairs(charts) do
-            if #summaries>0 or chart_index>1 then add(rule('dash'),4) end
+            if #summaries>0 or chart_index>1 then add(vg(UI_LAYOUT.section)) end
             local chart,reason
-            if item.metric=='words' then chart,reason=snapshot:words(item.period)
-            else chart,reason=snapshot:time(item.period) end
-            snapshot:note(item.title,reason or (chart and ((chart.missing or 0)>0 or chart.incomplete) and '记录不完整' or nil))
+            if item.metric=='words' then chart,reason=snapshot:words(item.period,Inkfolio.language()=='en_US')
+            else chart,reason=snapshot:time(item.period,nil,Inkfolio.language()=='en_US') end
+            snapshot:note(item.title,reason or (chart and ((chart.missing or 0)>0 or chart.incomplete) and L('记录不完整') or nil))
             if chart then
                 local detail
                 if item.metric=='words' then
                     local known=false
                     for _,day in ipairs(chart.days)do if day.words~=nil then known=true;break end end
-                    detail=known and (((chart.missing or 0)>0 or chart.incomplete) and '已记录 ' or '合计 ')..formatWordCount(chart.total) or '—'
+                    detail=known and (((chart.missing or 0)>0 or chart.incomplete) and L('已记录 ') or L('合计 '))..formatWordCount(chart.total) or '—'
                 elseif chart.known==0 then detail='—'
-                else detail=((chart.missing or 0)>0 and '已记录 ' or '')..'日均 '..duration(chart.average)..' · 合计 '..duration(chart.total) end
+                else detail=((chart.missing or 0)>0 and L('已记录 ') or '')..L('日均 ')..duration(chart.average)..L(' · 合计 ')..duration(chart.total) end
                 local lw=textWidth(item.title,'subheading')
                 if lw+px(12)+textWidth(detail,'small')<=w then
                     add(baselineRow(heading(item.title,'subheading',lw,'left'),hg(12),
@@ -3552,25 +6001,25 @@ local function renderReceipt(ui, state, appearance)
     if enabled(S.intro) then
         local chart=Inkfolio.visibleMonthly()
         add(rule('dash'),6)
-        local title=Inkfolio.monthlyCategory().id=='all' and '豆瓣月榜' or '豆瓣月榜 · '..Inkfolio.monthlyCategory().label
+        local title=Inkfolio.monthlyCategory().id=='all' and L('豆瓣月榜') or L('豆瓣月榜 · ')..Inkfolio.monthlyCategory().label
         add(heading(title,'section',w,'left',1),4)
         local rows={}
         if chart then
             local gap=px(12)
-            local ratingw=math.ceil(textWidth('10.0分','body'))+1
+            local ratingw=math.ceil(textWidth(L('10.0分'),'body'))+1
             local titlew=math.floor((w-ratingw-gap*2)*.66)
             local authorw=w-ratingw-gap*2-titlew
             local visible=Inkfolio.monthlyItems()
             for i,item in ipairs(visible)do
                 rows[#rows+1]=baselineRow(txt(item.title,'body',titlew,'left',1),hg(12),
                     txt(item.author,'body',authorw,'left',1),hg(12),
-                    txt(string.format('%.1f分',item.rating),'body',ratingw,'right',1))
+                    txt(string.format(L('%.1f分'),item.rating),'body',ratingw,'right',1))
                 if i<#visible then rows[#rows+1]=vg(3) end
             end
         end
         local note=Inkfolio.monthlyNote()
         if #rows>0 then add(VerticalGroup:new(rows),6) end
-        if note then add(txt((chart and '缓存 · ' or '')..note,'small',w,'left',2),4) end
+        if note then add(txt((chart and L('缓存 · ') or '')..note,'small',w,'left',2),4) end
     end
     add(rule('solid'))
     local footer=util.trim(G_reader_settings:readSetting(S.footer) or '')
@@ -3584,7 +6033,7 @@ local function renderReceipt(ui, state, appearance)
         stub_y=theme.id=='classic' and stub_y or nil,shadow_width=theme.shadow and px(theme.shadow) or 0,
         outline_color=(theme.id=='pixel' or background=='white') and Blitbuffer.COLOR_BLACK or nil,
         outline_width=px((theme.id=='pixel' or background=='white') and 2 or 1),
-        grid_pitch=px(12),grid_dot=px(2),VerticalGroup:new(elements),
+        VerticalGroup:new(elements),
     }
     local size=paper:getSize()
     if appearance.measure_only then return paper,true,{width=size.w,height=size.h} end
@@ -3594,7 +6043,7 @@ local function renderReceipt(ui, state, appearance)
         logger.warn('Read Receipt: layout exceeds screen',size.w,size.h)
         paper:free()
         return CenterContainer:new{dimen=Screen:getSize(),TextBoxWidget:new{
-            text='小票内容超出屏幕，请减小整体比例、字号或宽度。',
+            text=L('小票内容超出屏幕，请减小整体比例、字号或宽度。'),
             face=Font:getFace('cfont',f(22)),width=w,
             alignment='center',justified=false,
         }}
@@ -3605,7 +6054,7 @@ end
 -- New installs fit once, after a real book context exists. Manual appearance
 -- choices and existing installs are never fitted again.
 function Inkfolio.ensureAutoFit(ui,state)
-    if G_reader_settings:readSetting(S.auto_fit)~=true or not ui or not ui.document then return false end
+    if Inkfolio.isCardStyle() or G_reader_settings:readSetting(S.auto_fit)~=true or not ui or not ui.document then return false end
     local sw,sh=Screen:getWidth(),Screen:getHeight()
     local margin=math.max(8,math.floor(math.min(sw,sh)*.03))
     local width=G_reader_settings:readSetting(S.width) or Inkfolio.deviceDefaults().width
@@ -3639,7 +6088,9 @@ end
 
 -- Full-screen quicklook; same renderer and cached data as the suspend screen.
 local function receiptBackground(appearance)
-    local choice=appearance and appearance.background or G_reader_settings:readSetting(S.background) or 'white'
+    local cover=Inkfolio.isCardStyle(appearance)
+    local choice=cover and (appearance and appearance.cover_background or G_reader_settings:readSetting(S.cover_background)or 'white')
+        or (appearance and appearance.background or G_reader_settings:readSetting(S.background)or 'white')
     if choice=='transparent' then return nil end
     return choice=='black' and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_WHITE
 end
@@ -3647,7 +6098,7 @@ end
 local Quicklook = InputContainer:extend{modal=true,name='quick_look_box',covers_fullscreen=true}
 function Quicklook:init()
     self[1]=buildReceipt(self.ui,self.state)
-        or CenterContainer:new{dimen=Screen:getSize(),TextWidget:new{text='无法获取阅读小票',face=Font:getFace('cfont',22)}}
+        or CenterContainer:new{dimen=Screen:getSize(),TextWidget:new{text=L('无法获取阅读小票'),face=Font:getFace('cfont',22)}}
     self[1]=FrameContainer:new{width=Screen:getWidth(),height=Screen:getHeight(),
         bordersize=0,padding=0,margin=0,background=receiptBackground(),self[1]}
     if Device:hasKeys() then self.key_events.AnyKeyPressed={{Device.input.group.Any}} end
@@ -3687,13 +6138,13 @@ end
 
 local function homeReceiptContext()
     local path=G_reader_settings:readSetting('lastfile')
-    if not path then return nil,'尚未阅读书籍，打开一本书后即可显示InkFolio。' end
+    if not path then return nil,L('尚未阅读书籍，打开一本书后即可显示InkFolio。') end
     if lfs.attributes(path,'mode')~='file' then
-        return nil,'最近阅读的书籍已移动或删除，请重新打开书籍。'
+        return nil,L('最近阅读的书籍已移动或删除，请重新打开书籍。')
     end
     local saved=store:readSetting('last_receipt')
     if not saved or saved.file~=path then
-        return nil,'最近阅读的书籍尚无InkFolio记录，请打开该书并返回主页一次。'
+        return nil,L('最近阅读的书籍尚无InkFolio记录，请打开该书并返回主页一次。')
     end
     local context={document={file=path},doc_props=saved.props,
         doc_settings={data={doc_pages=saved.total}},
@@ -3723,7 +6174,7 @@ function Inkfolio.context()
     return homeReceiptContext()
 end
 function Inkfolio.message(text)
-    UIManager:show(require('ui/widget/infomessage'):new{text=text})
+    UIManager:show(require('ui/widget/infomessage'):new{text=L(text)})
 end
 function Inkfolio.backdrop()
     local bb=Screen.bb:copy()
@@ -3732,7 +6183,7 @@ function Inkfolio.backdrop()
         if ui and ui.document and ui.view then ui.view:paintTo(bb,0,0)
         else
             local fm=require('apps/filemanager/filemanager').instance
-            assert(fm,'主页界面不可用')
+            assert(fm,L('主页界面不可用'))
             fm:paintTo(bb,0,0)
         end
     end)
@@ -3764,10 +6215,10 @@ function Inkfolio.saveScreenshot()
     local ok,err=pcall(function()
         local valid
         receipt,valid=buildReceipt(ui,ui.view and ui.view.state)
-        assert(valid,'InkFolio无法完整显示，请减小比例或检查字体。')
+        assert(valid,L('InkFolio无法完整显示，请减小比例或检查字体。'))
         local Screenshoter=require('ui/widget/screenshoter')
         local dir=G_reader_settings:readSetting('screenshot_dir') or Screenshoter.default_dir
-        assert(type(dir)=='string' and dir~='' and util.makePath(dir),'截屏目录无法创建或访问')
+        assert(type(dir)=='string' and dir~='' and util.makePath(dir),L('截屏目录无法创建或访问'))
         local stem=dir:gsub('/$','')..'/Inkfolio_'..os.date('%Y-%m-%d_%H%M%S')
         path=stem..'.png'
         local number=1
@@ -3777,14 +6228,14 @@ function Inkfolio.saveScreenshot()
         if bg then canvas:fill(bg) end
         receipt:paintTo(canvas,0,0)
         canvas:writePNG(path)
-        assert((lfs.attributes(path,'size') or 0)>0,'截图文件写入失败')
+        assert((lfs.attributes(path,'size') or 0)>0,L('截图文件写入失败'))
     end)
     if receipt then receipt:free() end
     if canvas then canvas:free() end
     if not ok then
         if path then os.remove(path) end
-        Inkfolio.message('InkFolio 截图失败：'..tostring(err))
-    else Inkfolio.message('InkFolio 截图已保存：\n'..path) end
+        Inkfolio.message(L('InkFolio 截图失败：')..tostring(err))
+    else Inkfolio.message(L('InkFolio 截图已保存：\n')..path) end
     return true
 end
 
@@ -3793,7 +6244,7 @@ local nativeShow=Screensaver.show
 Screensaver.show=function(self)
     if self.screensaver_type~='book_receipt' then return nativeShow(self) end
     if not Device:supportsScreensaver() then
-        UIManager:show(require('ui/widget/infomessage'):new{text='此平台不支持 KOReader 休眠壁纸，可在阅读中打开小票预览。'})
+        UIManager:show(require('ui/widget/infomessage'):new{text=L('此平台不支持 KOReader 休眠壁纸，可在阅读中打开小票预览。')})
         return
     end
     -- Native sleep display precedes Suspend on Kobo and Kindle. Advance here,
@@ -3837,8 +6288,8 @@ local function awake()
     Inkfolio.recordDailyWords(0,false)
     Inkfolio.resumeWords()
     RUN.sleeping=false
-    RUN.cancelled_wake=false
-    dailyCheck(true)
+    RUN.cancelled_wake=false;RUN.auto_holds={}
+    currentCheck()
     startPoll()
 end
 local function doSleep()
@@ -3853,18 +6304,13 @@ local function doSleep()
 end
 local function onlineEvent()
     if RUN.sleeping or not networkingEnabled() or MANUAL_CONNECT_PENDING then return end
-    resetDay()
-    dailyCheck()
-    if DAILY_DONE then currentCheck() end
-    startPoll()
+    resetDay();Inkfolio.resetNetworkPause()
+    currentCheck();startPoll()
 end
 local function bookOpened()
     UIManager:nextTick(function()
         if RUN.sleeping or not networkingEnabled() then return end
-        dailyCheck(true)
-        -- When an initial library job is running, the current book is already first.
-        if DAILY_DONE then currentCheck() end
-        startPoll()
+        currentCheck();startPoll()
     end)
 end
 hook(ReaderUI,'onResume',awake)
@@ -3885,6 +6331,9 @@ if FMok and FM then
     hook(FM,'onResume',awake)
     hook(FM,'onSuspend',doSleep)
     hook(FM,'onNetworkConnected',onlineEvent)
+    hook(FM,'showFiles',Inkfolio.libraryChanged)
+    hook(FM,'onRefresh',Inkfolio.libraryChanged)
+    hook(FM,'onRefreshContent',Inkfolio.libraryChanged)
 end
 UIManager:scheduleIn(3,function() awake() end)
 
@@ -3900,11 +6349,11 @@ end
 function Inkfolio.parseAppearanceNumber(text,spec)
     text=util.trim(tostring(text or ''))
     if not (text:match('^%d+$') or text:match('^%d+%.%d$')) then
-        return nil,'请输入数值，最多保留一位小数。'
+        return nil,L('请输入数值，最多保留一位小数。')
     end
     local value=tonumber(text)
     if value<spec.min or value>spec.max then
-        return nil,'请输入 '..spec.min..'～'..spec.max..' 之间的数值（%）。'
+        return nil,L('请输入 ')..spec.min..(Inkfolio.language()=='en_US'and '–'or '～')..spec.max..L(' 之间的数值（%）。')
     end
     return value/100
 end
@@ -3913,7 +6362,10 @@ function AppearanceEditor:init()
     self.draft={width=G_reader_settings:readSetting(S.width) or .72,
         font=G_reader_settings:readSetting(S.font) or 1,
         scale=G_reader_settings:readSetting(S.scale) or 1,
-        background=G_reader_settings:readSetting(S.background) or 'white',ui_style=Inkfolio.uiStyle().id}
+        background=G_reader_settings:readSetting(S.background) or 'white',ui_style=Inkfolio.uiStyle().id,
+        card_width=G_reader_settings:readSetting(S.card_width)or .50,card_font=G_reader_settings:readSetting(S.card_font)or 1,
+        card_background=G_reader_settings:readSetting(S.card_background)or 'auto',
+        cover_background=G_reader_settings:readSetting(S.cover_background)or 'white'}
     self.backdrop=Screen.bb:copy()
     -- Repaint the reading view without the settings menu for transparent previews.
     local live=ReaderUI.instance
@@ -3921,7 +6373,32 @@ function AppearanceEditor:init()
     if (not live or not live.document) and FM and FM.instance then FM.instance:paintTo(self.backdrop,0,0) end
     self.refresh_callback=function()if not self.closed then self:refreshPreview() end end
     if Device:hasKeys() then self.key_events.Cancel={{Device.input.group.Back}} end
+    if Device:isTouchDevice()then
+        self.ges_events.PreviewTap={GestureRange:new{ges='tap',range=function()
+            return self.preview_image and self.preview_image.dimen or Geom:new()
+        end}}
+    end
     self:refreshPreview()
+end
+function AppearanceEditor:onPreviewTap()
+    if self.fullscreen then return true end
+    if self.pending then self:refreshPreview()end
+    local editor=self
+    local dialog=InputContainer:new{modal=true,covers_fullscreen=true,stop_events_propagation=true,
+        name='inkfolio_appearance_fullscreen',dimen=Screen:getSize(),
+        ImageWidget:new{image=self.preview_canvas,width=Screen:getWidth(),height=Screen:getHeight(),image_disposable=false}}
+    local function close()UIManager:close(dialog);return true end
+    dialog.ges_events.Tap={GestureRange:new{ges='tap',range=Screen:getSize()}}
+    dialog.key_events.AnyKeyPressed={{Device.input.group.Any}}
+    dialog.onTap=close;dialog.onCancel=close
+    dialog.onAnyKeyPressed=close
+    dialog.onSuspend=function()editor:onSuspend();return false end
+    dialog.onSetRotationMode=dialog.onSuspend
+    dialog.onCloseWidget=function(self)
+        editor.fullscreen=nil;self:free();UIManager:setDirty(nil,'full')
+    end
+    self.fullscreen=dialog;UIManager:show(dialog);UIManager:setDirty(dialog,'full')
+    return true
 end
 function AppearanceEditor:change(key,value)
     Inkfolio.recordAction('外观调整操作')
@@ -3941,11 +6418,11 @@ end
 function AppearanceEditor:editNumber(spec)
     local dialog
     dialog=require('ui/widget/inputdialog'):new{
-        title=spec.label..'（%）',modal=true,
+        title=spec.label..(Inkfolio.language()=='en_US'and ' (%)'or '（%）'),modal=true,
         input=(Inkfolio.appearancePercent(self.draft[spec.key]):gsub('%%$','')),
-        description='输入 '..spec.min..'～'..spec.max..'，最多保留一位小数。',input_type='number',
-        buttons={{{text='取消',callback=function()UIManager:close(dialog)end},
-            {text='应用',is_enter_default=true,callback=function()
+        description=L('输入 ')..spec.min..(Inkfolio.language()=='en_US'and '–'or '～')..spec.max..L('，最多保留一位小数。'),input_type='number',
+        buttons={{{text=L('取消'),callback=function()UIManager:close(dialog)end},
+            {text=L('预览'),is_enter_default=true,callback=function()
                 local value,reason=Inkfolio.parseAppearanceNumber(dialog:getInputText(),spec)
                 if not value then Inkfolio.message(reason);return end
                 UIManager:close(dialog)
@@ -3970,26 +6447,27 @@ function AppearanceEditor:refreshPreview()
     local rowh=math.max(20,math.floor(sh*.055))
     local fs=math.max(8,math.min(18,math.floor(rowh/Screen:scaleBySize(2.7))))
     local width=sw-2*pad
-    local title=TextWidget:new{text='InkFolio 外观 · '..sw..'×'..sh,max_width=width,face=Font:getFace('infofont',fs+2)}
+    local title=TextWidget:new{text=L('InkFolio 外观 · ')..sw..'×'..sh,max_width=width,face=Font:getFace('infofont',fs+2)}
     local receipt,valid=buildReceipt(self.ui,self.ui.view and self.ui.view.state,self.draft)
     assert(receipt,'InkFolio appearance: missing book context')
     local preview_valid=valid==true
-    local status=TextWidget:new{text=preview_valid and '切换风格即时预览；点击数值可手动输入' or '无法显示，请减小设置或检查字体',
-        max_width=width,face=Font:getFace('infofont',fs)}
     local rows={}
-    local button_padding=require('ui/size').padding.buttontable
-    local function button(text,callback,enabled,bw)
-        return {text=text,callback=callback,enabled=enabled~=false,width=bw,height=math.max(1,rowh-2*button_padding),
+    local function button(text,callback,enabled,bw,checked)
+        return {text=text,callback=callback,enabled=enabled~=false,width=bw,checked_func=checked,
             font_size=fs,font_face='infofont'}
     end
-    local style_row={button('风格',nil,false)}
+    local style_row={button(L('风格'),nil,false)}
     for _,item in ipairs(Inkfolio.UI_STYLES)do
         local id=item.id
-        style_row[#style_row+1]=button(self.draft.ui_style==id and ('['..item.label..']') or item.label,
-            function()self:selectStyle(id)end)
+        style_row[#style_row+1]=button(item.label,function()self:selectStyle(id)end,true,nil,
+            function()return self.draft.ui_style==id end)
     end
     rows[#rows+1]=style_row
-    for _,spec in ipairs(Inkfolio.APPEARANCE_NUMBERS)do
+    local is_card=Inkfolio.isCardStyle(self.draft)
+    local specs=is_card and {
+        {key='card_width',label=L('卡片宽度'),step=5,min=40,max=85},
+        {key='card_font',label=L('卡片字号'),step=5,min=80,max=120}}or Inkfolio.APPEARANCE_NUMBERS
+    for _,spec in ipairs(specs)do
         local key=spec.key
         local current=math.floor(self.draft[key]*1000+.5)/10
         local function adjust(direction)
@@ -4001,20 +6479,33 @@ function AppearanceEditor:refreshPreview()
             button(spec.label..' '..Inkfolio.appearancePercent(self.draft[key]),function()self:editNumber(spec)end,true,math.floor(width*.5)),
             button('+',function()adjust(1)end,current<spec.max)}
     end
-    local background={button('背景',nil,false)}
-    for _,item in ipairs({{'白色','white'},{'黑色','black'},{'透明','transparent'}}) do
-        local label,key=item[1],item[2]
-        background[#background+1]=button(self.draft.background==key and ('['..label..']') or label,
-            function()self:change('background',key)end)
+    do
+        local background_key=is_card and 'cover_background'or 'background'
+        local background={button(is_card and L('封面底色')or L('背景'),nil,false)}
+        local choices=is_card and {{L('白色'),'white'},{L('黑色'),'black'}}or {{L('白色'),'white'},{L('黑色'),'black'},{L('透明'),'transparent'}}
+        for _,item in ipairs(choices) do
+            local label,key=item[1],item[2]
+            background[#background+1]=button(label,function()self:change(background_key,key)end,true,nil,
+                function()return self.draft[background_key]==key end)
+        end
+        rows[#rows+1]=background
     end
-    rows[#rows+1]=background
-    rows[#rows+1]={button('取消',function()self:onCancel()end),
-        button('保存',function()self:save()end,preview_valid)}
-    local controls=require('ui/widget/buttontable'):new{width=width,buttons=rows,show_parent=self,
-        addVerticalSpan=function(table_widget)
-            table.insert(table_widget.container,VerticalSpan:new{width=gap})
-        end}
-    local available=sh-2*pad-title:getSize().h-status:getSize().h-controls:getSize().h-3*gap
+    if is_card then
+        local card_colors={button(L('卡片底色'),nil,false)}
+        local choices={{L('自动'),'auto'},{L('白色'),'white'},{L('深灰'),'black'}}
+        for _,item in ipairs(choices)do
+            local label,key=item[1],item[2]
+            card_colors[#card_colors+1]=button(label,function()self:change('card_background',key)end,true,nil,
+                function()return self.draft.card_background==key end)
+        end
+        rows[#rows+1]=card_colors
+    end
+    rows[#rows+1]={button(L('取消'),function()self:onCancel()end),
+        button(L('保存'),function()self:save()end,preview_valid)}
+    -- Native buttons measure their text and retain standard touch padding.
+    -- Give all space released by compact controls to the preview above them.
+    local controls=require('ui/widget/buttontable'):new{width=width,buttons=rows,show_parent=self}
+    local available=sh-2*pad-title:getSize().h-controls:getSize().h-2*gap
     assert(available>0,'InkFolio appearance controls exceed screen')
     local zoom=math.min(width/sw,available/sh)
     local pw,ph=math.max(1,math.floor(sw*zoom)),math.max(1,math.floor(sh*zoom))
@@ -4024,15 +6515,18 @@ function AppearanceEditor:refreshPreview()
     else canvas:blitFrom(self.backdrop,0,0,0,0,sw,sh) end
     receipt:paintTo(canvas,0,0)
     receipt:free()
-    local bitmap=RenderImage:scaleBlitBuffer(canvas,pw,ph,true)
+    local bitmap=RenderImage:scaleBlitBuffer(canvas,pw,ph,false)
+    local preview_image=ImageWidget:new{image=bitmap,width=pw,height=ph,image_disposable=true}
     local preview=CenterContainer:new{dimen=Geom:new{w=width,h=available},
-        ImageWidget:new{image=bitmap,width=pw,height=ph,image_disposable=true}}
+        preview_image}
     local old=self[1]
     self[1]=FrameContainer:new{width=sw,height=sh,bordersize=0,margin=0,padding=pad,
         background=Blitbuffer.COLOR_WHITE,VerticalGroup:new{align='center',title,
-            VerticalSpan:new{width=gap},preview,VerticalSpan:new{width=gap},status,
-            VerticalSpan:new{width=gap},controls}}
+            VerticalSpan:new{width=gap},preview,VerticalSpan:new{width=gap},controls}}
     if old then old:free() end
+    if self.preview_canvas then self.preview_canvas:free()end
+    self.preview_canvas=canvas;self.preview_image=preview_image
+    self.controls=controls
     self.valid=preview_valid
     UIManager:setDirty(self,'ui')
 end
@@ -4040,14 +6534,20 @@ function AppearanceEditor:save()
     Inkfolio.recordAction('外观保存')
     if self.pending then self:refreshPreview() end
     if not self.valid then return end
-    local changes={[S.auto_fit]=false}
-    for _,key in ipairs({'width','font','scale','background','ui_style'})do changes[S[key]]=self.draft[key] end
+    local before_today,before_tomorrow=Inkfolio.weatherSelected(0),Inkfolio.weatherSelected(1)
+    local is_card=Inkfolio.isCardStyle(self.draft)
+    local changes=is_card and {}or {[S.auto_fit]=false}
+    local keys=is_card and {'ui_style','card_width','card_font','card_background','cover_background'}or {'width','font','scale','background','ui_style'}
+    for _,key in ipairs(keys)do changes[S[key]]=self.draft[key]end
     Inkfolio.persistSettings(changes)
     UIManager:close(self)
-    if refreshQuicklook then refreshQuicklook() end
+    if before_today~=Inkfolio.weatherSelected(0)or before_tomorrow~=Inkfolio.weatherSelected(1)then
+        Inkfolio.weatherChanged(Inkfolio.weatherEnabled())
+    elseif refreshQuicklook then refreshQuicklook()end
 end
 function AppearanceEditor:onCancel()
     if self.number_dialog then UIManager:close(self.number_dialog) end
+    if self.fullscreen then UIManager:close(self.fullscreen)end
     UIManager:close(self);return true
 end
 function AppearanceEditor:onSuspend() self:onCancel();return false end
@@ -4056,6 +6556,8 @@ function AppearanceEditor:onCloseWidget()
     self.closed=true
     UIManager:unschedule(self.refresh_callback)
     if self.backdrop then self.backdrop:free();self.backdrop=nil end
+    if self.fullscreen then UIManager:close(self.fullscreen)end
+    if self.preview_canvas then self.preview_canvas:free();self.preview_canvas=nil end
     self:free()
     UIManager:setDirty(nil,'full')
 end
@@ -4079,12 +6581,12 @@ function Inkfolio.copyMatchState()
 end
 function Inkfolio.acceptMatch(book,url)
     Inkfolio.recordAction('匹配认可')
-    if RUN.active or RUN.worker or MANUAL_CONNECT_PENDING then return false,'获取进行中，请结束后再确认。' end
+    if RUN.active or RUN.worker or MANUAL_CONNECT_PENDING then return false,L('获取进行中，请结束后再确认。') end
     local key=Inkfolio.fileMatchKey(book);local pending=Inkfolio.matchState.pending[key]
-    if not pending then return false,'待确认结果已变化，请重新获取。' end
+    if not pending then return false,L('待确认结果已变化，请重新获取。') end
     local record
     for _,c in ipairs(pending.candidates)do if c.url==url then record=c;break end end
-    if not record or not validURL(record.url) or not record.rating or record.rating<=0 or record.rating>10 then return false,'候选没有有效评分，不能确认。' end
+    if not record or not validURL(record.url) or not record.rating or record.rating<=0 or record.rating>10 then return false,L('候选没有有效评分，不能确认。') end
     local copy={};for k,v in pairs(record)do copy[k]=v end
     copy.user_confirmed=true;copy.confirmed_at=os.time();copy.identity_version=2
     -- User accepts one concrete source, not a guessed collection average.
@@ -4096,7 +6598,7 @@ function Inkfolio.acceptMatch(book,url)
     local cachekey='confirmed:'..key;local old=CACHE[cachekey];local oldstate=Inkfolio.matchState
     CACHE[cachekey]=copy
     local ok=pcall(function()store:saveSetting('books',CACHE);store:saveSetting('book_matching',state);store:flush()end)
-    if not ok then CACHE[cachekey]=old;store:saveSetting('books',CACHE);store:saveSetting('book_matching',oldstate);return false,'确认保存失败，请检查设置目录。' end
+    if not ok then CACHE[cachekey]=old;store:saveSetting('books',CACHE);store:saveSetting('book_matching',oldstate);return false,L('确认保存失败，请检查设置目录。') end
     Inkfolio.matchState=state
     Inkfolio.infoResult('books',bookKey(book),'success')
     if refreshQuicklook then refreshQuicklook(bookKey(book)) end
@@ -4104,31 +6606,31 @@ function Inkfolio.acceptMatch(book,url)
 end
 function Inkfolio.dismissMatch(book)
     Inkfolio.recordAction('暂不采用')
-    if RUN.active or RUN.worker then return false,'获取进行中，请稍后操作。' end
+    if RUN.active or RUN.worker then return false,L('获取进行中，请稍后操作。') end
     local state=Inkfolio.copyMatchState();local key=Inkfolio.fileMatchKey(book);state.pending[key]=nil
     local holds={};for k,v in pairs(state.holds)do holds[k]=v end
     holds[key]=Inkfolio.metadataKey(book);state.holds=holds
     return Inkfolio.writeMatchState(state)
 end
 function Inkfolio.showCandidate(book,candidate,parent)
-    local text='当前文件：'..book.title..'\n\n候选图书：'..candidate.title..'\n作者／贡献者：'..candidate.authors
-        ..'\n评分：'..candidate.rating..'/10\n版本信息：'..tostring(candidate.version_note or '')
-        ..'\n核验差异：'..tostring(candidate.reason or '用户检索结果，仍需确认')
-        ..'\n来源：'..candidate.url..'\n获取时间：'..infoTime(candidate.updated_at)
-        ..'\n\n简介：'..tostring(candidate.intro or '来源没有可提取的简介')
-        ..'\n\n认可后按此具体条目显示，不代表全集或其他版本的评分。'
+    local text=L('当前文件：')..book.title..L('\n\n候选图书：')..candidate.title..L('\n作者／贡献者：')..candidate.authors
+        ..L('\n评分：')..candidate.rating..L('/10\n版本信息：')..tostring(candidate.version_note or '')
+        ..L('\n核验差异：')..tostring(L(candidate.reason)or L('用户检索结果，仍需确认'))
+        ..L('\n来源：')..candidate.url..L('\n获取时间：')..infoTime(candidate.updated_at)
+        ..L('\n\n简介：')..tostring(candidate.intro or L('来源没有可提取的简介'))
+        ..L('\n\n认可后按此具体条目显示，不代表全集或其他版本的评分。')
     local viewer
-    viewer=require('ui/widget/textviewer'):new{title='确认图书匹配',text=text,
-        buttons_table={{{text='返回',callback=function()UIManager:close(viewer);Inkfolio.showBookMatches(book,parent)end},
-            {text='认可此信息',callback=function()
+    viewer=Inkfolio.textViewer{title=L('确认图书匹配'),text=text,
+        buttons_table={{{text=L('返回'),callback=function()UIManager:close(viewer);Inkfolio.showBookMatches(book,parent)end},
+            {text=L('认可此信息'),callback=function()
                 local ok,err=Inkfolio.acceptMatch(book,candidate.url)
-                UIManager:show(require('ui/widget/infomessage'):new{text=ok and '已保存用户确认的匹配信息。' or err})
+                UIManager:show(require('ui/widget/infomessage'):new{text=ok and L('已保存用户确认的匹配信息。') or err})
                 if ok then UIManager:close(viewer);if parent then parent:refreshPending() end end
             end}}}}
     UIManager:show(viewer)
 end
 function Inkfolio.showBookMatches(book,parent)
-    if RUN.active or RUN.worker then UIManager:show(require('ui/widget/infomessage'):new{text='获取进行中，请结束后再确认。'});return end
+    if RUN.active or RUN.worker then UIManager:show(require('ui/widget/infomessage'):new{text=L('获取进行中，请结束后再确认。')});return end
     local p=Inkfolio.matchState.pending[Inkfolio.fileMatchKey(book)]
     if not p then Inkfolio.editMatchQuery(book,parent);return end
     local buttons={};local dialog
@@ -4136,17 +6638,17 @@ function Inkfolio.showBookMatches(book,parent)
         local candidate=c
         buttons[#buttons+1]={{text=c.title..' · '..c.rating..'/10',callback=function()UIManager:close(dialog);Inkfolio.showCandidate(book,candidate,parent)end}}
     end
-    buttons[#buttons+1]={{text='自行输入书名、作者',callback=function()UIManager:close(dialog);Inkfolio.editMatchQuery(book,parent)end}}
-    buttons[#buttons+1]={{text='暂不采用',callback=function()
+    buttons[#buttons+1]={{text=L('自行输入书名、作者'),callback=function()UIManager:close(dialog);Inkfolio.editMatchQuery(book,parent)end}}
+    buttons[#buttons+1]={{text=L('暂不采用'),callback=function()
         local ok,err=Inkfolio.dismissMatch(book)
         if ok then UIManager:close(dialog);if parent then parent:refreshPending() end end
-        UIManager:show(require('ui/widget/infomessage'):new{text=ok and (cached(book) and '保留已有信息；以后仍可重新获取。' or '本书暂不显示联网评分和简介；以后仍可重新获取。') or err})
-    end},{text='稍后处理',callback=function()UIManager:close(dialog);if parent then parent:refreshPending() end end}}
-    dialog=require('ui/widget/buttondialog'):new{title=shortText(book.title,45)..'\n待确认：'..shortText(tostring(p.reason or ''),80),buttons=buttons}
+        UIManager:show(require('ui/widget/infomessage'):new{text=ok and (cached(book) and L('保留已有信息；以后仍可重新获取。') or L('本书暂不显示联网评分和简介；以后仍可重新获取。')) or err})
+    end},{text=L('稍后处理'),callback=function()UIManager:close(dialog);if parent then parent:refreshPending() end end}}
+    dialog=require('ui/widget/buttondialog'):new{title=shortText(book.title,45)..L('\n待确认：')..shortText(tostring(p.reason or ''),80),buttons=buttons}
     UIManager:show(dialog)
 end
 function Inkfolio.showPendingMatches(parentMenu)
-    if RUN.active or RUN.worker then UIManager:show(require('ui/widget/infomessage'):new{text='获取进行中，请结束后再确认。'});return end
+    if RUN.active or RUN.worker then UIManager:show(require('ui/widget/infomessage'):new{text=L('获取进行中，请结束后再确认。')});return end
     local dialog
     local function items()
         local entries={};for key,p in pairs(Inkfolio.matchState.pending)do
@@ -4158,15 +6660,15 @@ function Inkfolio.showPendingMatches(parentMenu)
             local book=entry.p.book
             rows[#rows+1]={text=book.title,callback=function()Inkfolio.showBookMatches(book,dialog)end}
         end
-        if #rows==0 then rows={{text='暂无待确认图书',select_enabled=false}} end
+        if #rows==0 then rows={{text=L('暂无待确认图书'),select_enabled=false}} end
         return rows
     end
-    dialog=require('ui/widget/menu'):new{title='待确认图书',item_table=items(),width=math.floor(Screen:getWidth()*.9),
+    dialog=require('ui/widget/menu'):new{title=L('待确认图书'),item_table=items(),width=math.floor(Screen:getWidth()*.9),
         onMenuSelect=function(_,item)if item.callback then item.callback() end end}
     function dialog:refreshPending()
         if self.inkfolio_closed then return end
         local page=self.page or 1
-        self:switchItemTable('待确认图书',items(),-1)
+        self:switchItemTable(L('待确认图书'),items(),-1)
         self.page=math.max(1,math.min(page,self.page_num or 1));self:updateItems()
     end
     local close=dialog.onCloseWidget
@@ -4178,19 +6680,19 @@ function Inkfolio.showPendingMatches(parentMenu)
 end
 function Inkfolio.editMatchQuery(book,parent)
     Inkfolio.recordAction('重新检索')
-    if not book then UIManager:show(require('ui/widget/infomessage'):new{text='请在阅读界面选择一本书。'});return end
-    if RUN.active or RUN.worker or MANUAL_CONNECT_PENDING then UIManager:show(require('ui/widget/infomessage'):new{text='已有获取任务，请结束后再检索。'});return end
+    if not book then UIManager:show(require('ui/widget/infomessage'):new{text=L('请在阅读界面选择一本书。')});return end
+    if RUN.active or RUN.worker or MANUAL_CONNECT_PENDING then UIManager:show(require('ui/widget/infomessage'):new{text=L('已有获取任务，请结束后再检索。')});return end
     local dialog
-    dialog=require('ui/widget/multiinputdialog'):new{title='重新检索当前图书',
-        fields={{description='书名',text=Inkfolio.searchTitle(book)},{description='作者',text=book.authors}},
-        buttons={{{text='取消',callback=function()UIManager:close(dialog)end},
-            {text='提交检索',callback=function()
+    dialog=require('ui/widget/multiinputdialog'):new{title=L('重新检索当前图书'),
+        fields={{description=L('书名'),text=Inkfolio.searchTitle(book)},{description=L('作者'),text=book.authors}},
+        buttons={{{text=L('取消'),callback=function()UIManager:close(dialog)end},
+            {text=L('提交检索'),callback=function()
                 local fields=dialog:getFields();local title,author=util.trim(fields[1]),util.trim(fields[2])
                 if title=='' or author=='' or #title>600 or #author>600 or title:find('[\r\n]') or author:find('[\r\n]') then
-                    UIManager:show(require('ui/widget/infomessage'):new{text='请输入一行书名和作者，每项不超过200个汉字。'});return
+                    UIManager:show(require('ui/widget/infomessage'):new{text=L('请输入一行书名和作者，每项不超过200个汉字。')});return
                 end
-                if not networkingEnabled() or not connected() then UIManager:show(require('ui/widget/infomessage'):new{text='请开启插件联网并连接网络后提交。'});return end
-                if RUN.active or RUN.worker then UIManager:show(require('ui/widget/infomessage'):new{text='已有获取任务，请稍后提交。'});return end
+                if not networkingEnabled() or not connected() then UIManager:show(require('ui/widget/infomessage'):new{text=L('请开启插件联网并连接网络后提交。')});return end
+                if RUN.active or RUN.worker then UIManager:show(require('ui/widget/infomessage'):new{text=L('已有获取任务，请稍后提交。')});return end
                 UIManager:close(dialog)
                 local request={};for k,v in pairs(book)do request[k]=v end
                 request.title=title;request.path=nil;request.authors=author;request.isbn='';request.publisher='';request.description=''
@@ -4204,10 +6706,10 @@ function Inkfolio.editMatchQuery(book,parent)
                     if token~=RUN.token then return end
                     local pending=Inkfolio.matchState.pending[Inkfolio.fileMatchKey(book)]
                     Inkfolio.infoResult('books',bookKey(book),pending and #pending.candidates>0 and 'pending' or 'failed',reason)
-                    RUN.done=1;PROGRESS.done=1;RUN.active=false;RUN.manual=false;progressEnd(reason or '检索完成，等待确认。')
+                    RUN.done=1;PROGRESS.done=1;RUN.active=false;RUN.manual=false;progressEnd(reason or L('检索完成，等待确认。'))
                     if parent then parent:refreshPending() end
                     if pending and #pending.candidates>0 then Inkfolio.showBookMatches(book,parent)
-                    else UIManager:show(require('ui/widget/infomessage'):new{text=(cached(book) and '未匹配成功，保留已有信息。' or '未匹配成功，本书暂不显示联网评分和简介。')..'\n'..tostring(reason or '')}) end
+                    else UIManager:show(require('ui/widget/infomessage'):new{text=(cached(book) and L('未匹配成功，保留已有信息。') or L('未匹配成功，本书暂不显示联网评分和简介。'))..'\n'..tostring(reason or '')}) end
                     if startPoll then startPoll() end
                 end)
             end}}}}
@@ -4216,11 +6718,11 @@ end
 function Inkfolio.clearCurrentMatch()
     local book=currentBook();if not book or RUN.active or RUN.worker then return end
     local dialog
-    dialog=require('ui/widget/confirmbox'):new{text='解除本书的用户确认匹配？后续重新按自动规则核验。',
-        ok_text='解除',ok_callback=function()
+    dialog=require('ui/widget/confirmbox'):new{cancel_text=L('取消'),text=L('解除本书的用户确认匹配？后续重新按自动规则核验。'),
+        ok_text=L('解除'),ok_callback=function()
             local state=Inkfolio.copyMatchState();state.choices[Inkfolio.fileMatchKey(book)]=nil
             local ok,err=Inkfolio.writeMatchState(state)
-            UIManager:show(require('ui/widget/infomessage'):new{text=ok and '已解除匹配，请重新更新信息。' or err})
+            UIManager:show(require('ui/widget/infomessage'):new{text=ok and L('已解除匹配，请重新更新信息。') or err})
         end}
     UIManager:show(dialog)
 end
@@ -4233,11 +6735,11 @@ end
 function Inkfolio.editSearchTitle()
     local book=currentBook()
     if not book or book.title=='' then
-        UIManager:show(require('ui/widget/infomessage'):new{text='请在需要设置的书籍阅读界面打开此选项。'})
+        UIManager:show(require('ui/widget/infomessage'):new{text=L('请在需要设置的书籍阅读界面打开此选项。')})
         return
     end
     if RUN.active or RUN.worker or MANUAL_CONNECT_PENDING then
-        UIManager:show(require('ui/widget/infomessage'):new{text='获取进行中，请结束后再修改搜索书名。'})
+        UIManager:show(require('ui/widget/infomessage'):new{text=L('获取进行中，请结束后再修改搜索书名。')})
         return
     end
     local dialog
@@ -4245,14 +6747,14 @@ function Inkfolio.editSearchTitle()
         local ok,reason=Inkfolio.setSearchTitle(book,text)
         if not ok then UIManager:show(require('ui/widget/infomessage'):new{text=reason});return end
         UIManager:close(dialog)
-        UIManager:show(require('ui/widget/infomessage'):new{text='搜索书名已保存，请使用“更新信息”重新获取。'})
+        UIManager:show(require('ui/widget/infomessage'):new{text=L('搜索书名已保存，请使用“更新信息”重新获取。')})
     end
     dialog=require('ui/widget/inputdialog'):new{
-        title='当前书籍的搜索书名',input=Inkfolio.searchTitle(book),
-        description='只影响此书的联网搜索与匹配，不修改文件或小票书名。恢复默认后自动根据内部标题和文件名确认。',
-        buttons={{{text='取消',callback=function()UIManager:close(dialog)end},
-            {text='恢复默认',callback=function()save(nil)end},
-            {text='保存',is_enter_default=true,callback=function()save(dialog:getInputText())end}}},
+        title=L('当前书籍的搜索书名'),input=Inkfolio.searchTitle(book),
+        description=L('只影响此书的联网搜索与匹配，不修改文件或小票书名。恢复默认后自动根据内部标题和文件名确认。'),
+        buttons={{{text=L('取消'),callback=function()UIManager:close(dialog)end},
+            {text=L('恢复默认'),callback=function()save(nil)end},
+            {text=L('保存'),is_enter_default=true,callback=function()save(dialog:getInputText())end}}},
     }
     UIManager:show(dialog);dialog:onShowKeyboard()
 end
@@ -4260,14 +6762,14 @@ local function editFooter()
     local InputDialog=require('ui/widget/inputdialog')
     local dialog
     dialog=InputDialog:new{
-        title='小票底部文字（最多20字）',
+        title=L('小票底部文字（最多20字）'),
         input=G_reader_settings:readSetting(S.footer) or '',
         buttons={{
-            {text='取消',callback=function() UIManager:close(dialog) end},
-            {text='保存',is_enter_default=true,callback=function()
+            {text=L('取消'),callback=function() UIManager:close(dialog) end},
+            {text=L('保存'),is_enter_default=true,callback=function()
                 local text=dialog:getInputText()
                 if not footerTextValid(text) then
-                    UIManager:show(require('ui/widget/infomessage'):new{text='请输入一行文字，最多20个字符。'})
+                    UIManager:show(require('ui/widget/infomessage'):new{text=L('请输入一行文字，最多20个字符。')})
                     return
                 end
                 G_reader_settings:saveSetting(S.footer,text)
@@ -4280,16 +6782,49 @@ local function editFooter()
 end
 
 
+local function weatherCityMenu()
+    local regions={{text=L('不设置城市'),radio=true,keep_menu_open=true,
+        checked_func=function()return G_reader_settings:readSetting(S.weather_city)==false end,
+        callback=function()
+            G_reader_settings:saveSetting(S.weather_city,false)
+            WEATHER.pending=false;store:saveSetting('weather',WEATHER);store:flush()
+            startPoll();if refreshQuicklook then refreshQuicklook()end
+        end}}
+    for _,region in ipairs(WEATHER_REGIONS) do
+        local rows={}
+        for _,city in ipairs(region.cities) do
+            rows[#rows+1]={
+                radio=true,text=(Inkfolio.language()=='en_US'and Inkfolio.LOCATION_NAMES[city.name]or city.name)..(city.code=='' and L('（气象台暂无数据）') or ''),
+                enabled=city.code~='',keep_menu_open=true,
+                checked_func=function() local selected=selectedWeatherCity();return selected~=nil and selected.code==city.code end,
+                callback=function()
+                    if city.code=='' then return end
+                    local selected=selectedWeatherCity()
+                    if selected and selected.code==city.code then return end
+                    G_reader_settings:saveSetting(S.weather_city,city.code)
+                    RUN.auto_holds.weather=nil;Inkfolio.resetNetworkPause()
+                    WEATHER.pending=selectedWeatherCity()~=nil
+                    store:saveSetting('weather',WEATHER);store:flush()
+                    -- Wait for the current HTTP request, then fetch the newly selected city.
+                    weatherCheck();startPoll()
+                end,
+            }
+        end
+        regions[#regions+1]={text=Inkfolio.language()=='en_US'and Inkfolio.LOCATION_NAMES[region.name]or region.name,sub_item_table=rows}
+    end
+    return regions
+end
+
 local function progressMenu()
     local rows={
-        {text='章节（固定）',checked_func=function()return true end,enabled=false},
-        {text='当前页码（固定）',checked_func=function()return true end,enabled=false},
+        {text=L('章节（固定）'),checked_func=function()return true end,enabled=false},
+        {text=L('当前页码（固定）'),checked_func=function()return true end,enabled=false},
     }
     for _,item in ipairs(PROGRESS_ITEMS) do
         local key=item.key
         local function available()return Inkfolio.progressEnabled(key) or Inkfolio.progressCount()<2 end
         rows[#rows+1]={text=item.label,keep_menu_open=true,
-            help_text=key==S.word_book and '全书正文字数乘当前进度，属于折算值。' or key==S.word_session and '此次唤醒后跨书累计实际翻阅的正文，同一位置去重；休眠或重启后重新统计。' or nil,
+            help_text=key==S.word_book and L('全书正文字数乘当前进度，属于折算值。') or key==S.word_session and L('此次唤醒后跨书累计实际翻阅的正文，同一位置去重；休眠或重启后重新统计。') or nil,
             checked_func=function()return Inkfolio.progressEnabled(key)end,
             enabled_func=available,callback=function()
                 if not available() then return end
@@ -4301,7 +6836,7 @@ end
 
 local function summaryMenu()
     local choices={}
-    local rows={{text='显示阅读摘要',keep_menu_open=true,
+    local rows={{text=L('显示阅读摘要'),keep_menu_open=true,
         checked_func=function() return enabled(S.stats) end,
         callback=function() G_reader_settings:saveSetting(S.stats,not enabled(S.stats)) end}}
     for _,item in ipairs(SUMMARY_ITEMS) do
@@ -4312,8 +6847,8 @@ local function summaryMenu()
         local function available()
             return enabled(S.stats) and (checked() or #summaryItems()<2)
         end
-        local name=item.global and item.period and ('全局'..item.label) or item.label
-        if not item.legacy or checked() then choices[#choices+1]={text=name..(item.legacy and '（旧设置）' or ''),keep_menu_open=true,checked_func=checked,
+        local name=item.global and item.period and (L('全局')..item.label) or item.label
+        if not item.legacy or checked() then choices[#choices+1]={text=name..(item.legacy and L('（旧设置）') or ''),keep_menu_open=true,checked_func=checked,
             enabled_func=available,callback=function()
                 if not available() then return end
                 local chosen={}
@@ -4325,22 +6860,22 @@ local function summaryMenu()
                 G_reader_settings:saveSetting(S.summary,chosen)
             end} end
     end
-    rows[#rows+1]={text='摘要内容（最多2项）',sub_item_table=choices,
-        text_func=function()return '摘要内容（已选'..#summaryItems()..'/2）' end,
-        help_text='每项是一组数字摘要。选满两项后，请先取消一项，再选择其他内容；今日、本周、本月统计所有图书。'}
+    rows[#rows+1]={text=L('摘要内容（最多2项）'),sub_item_table=choices,
+        text_func=function()return L('摘要内容（已选')..#summaryItems()..(Inkfolio.language()=='en_US'and '/2)'or '/2）') end,
+        help_text=L('每项是一组数字摘要。选满两项后，请先取消一项，再选择其他内容；今日、本周、本月统计所有图书。')}
     local metrics={}
-    for _,item in ipairs({{id='words',label='时长＋字数'},{id='pages',label='时长＋页数'}}) do
+    for _,item in ipairs({{id='words',label=L('时长＋字数')},{id='pages',label=L('时长＋页数')}}) do
         local id=item.id
-        metrics[#metrics+1]={text=item.label,keep_menu_open=true,
+        metrics[#metrics+1]={text=item.label,radio=true,keep_menu_open=true,
             checked_func=function()return Inkfolio.summaryMetric()==id end,
             callback=function()G_reader_settings:saveSetting(S.summary_metric,id)end}
     end
-    rows[#rows+1]={text='周期摘要指标',sub_item_table=metrics,
-        text_func=function()return '周期摘要：时长＋'..(Inkfolio.summaryMetric()=='words' and '字数' or '页数') end,
-        help_text='适用于全局今日、本周、本月。累计摘要与旧本书今日固定显示时长和页数。'}
-    rows[#rows+1]={text='阅读图表（最多2项）',sub_item_table={},
-        text_func=function()return '阅读图表（已选'..#Inkfolio.chartItems()..'/2）' end,
-        help_text='显示每天的阅读时长或字数，可独立于数字摘要选择；选满两项后，先取消一项再切换。'}
+    rows[#rows+1]={text=L('周期摘要指标'),sub_item_table=metrics,
+        text_func=function()return L('周期摘要：时长＋')..(Inkfolio.summaryMetric()=='words' and L('字数') or L('页数')) end,
+        help_text=L('适用于全局今日、本周、本月。累计摘要与旧本书今日固定显示时长和页数。')}
+    rows[#rows+1]={text=L('阅读图表（最多2项）'),cover_disabled=true,sub_item_table={},
+        text_func=function()return L('阅读图表（已选')..#Inkfolio.chartItems()..(Inkfolio.language()=='en_US'and '/2)'or '/2）') end,
+        help_text=L('显示每天的阅读时长或字数，可独立于数字摘要选择；选满两项后，先取消一项再切换。')}
     local trend=rows[#rows].sub_item_table
     for _,item in ipairs(Inkfolio.CHART_ITEMS) do
         local function checked()
@@ -4357,23 +6892,23 @@ local function summaryMenu()
                 G_reader_settings:saveSetting(S.charts,chosen)
             end}
     end
-    rows[#rows+1]={text='统计说明',callback=Inkfolio.showStatisticsHelp}
+    rows[#rows+1]={text=L('统计说明'),callback=Inkfolio.showStatisticsHelp}
     return rows
 end
 
 local function chooseLibraryRoot()
     local PathChooser=require('ui/widget/pathchooser')
     UIManager:show(PathChooser:new{
-        title='选择书库目录',select_directory=true,select_file=false,show_files=false,
+        title=L('选择书库目录'),select_directory=true,select_file=false,show_files=false,
         path=rootPath() or Device.home_dir or '/',
         onConfirm=function(path)
             if path=='/' or lfs.attributes(path,'mode')~='directory' then
-                UIManager:show(require('ui/widget/infomessage'):new{text='请选择可读取的图书文件夹，不能选择系统根目录。'})
+                UIManager:show(require('ui/widget/infomessage'):new{text=L('请选择可读取的图书文件夹，不能选择系统根目录。')})
                 return
             end
             if RUN.active or RUN.worker then abortRound() end
             G_reader_settings:saveSetting(S.library_root,path)
-            nextLibraryScan=0
+            RUN.scan_pending=true
             dailyCheck(true);startPoll()
         end,
     })
@@ -4381,27 +6916,26 @@ end
 
 local function openProjectLink(url)
     if not Device:openLink(url) then
-        UIManager:show(require('ui/widget/textviewer'):new{
-            title='此设备无法直接打开网页',text=url,justified=false,show_menu=false})
+        UIManager:show(Inkfolio.textViewer{
+            title=L('此设备无法直接打开网页'),text=url,justified=false,show_menu=false})
     end
 end
 function Inkfolio.showChangelog()
-    UIManager:show(require('ui/widget/textviewer'):new{
-        title='更新日志',text="v1.2.0｜2026-10-23\n\n新增\n• 阅读字数按日汇总，新增周／月字数柱状图，更直观地查看阅读量。\n• 日／周／月阅读目标，支持时长或字数，展示完成比例。\n• 小票、像素、现代三种风格，可切换并实时预览。\n• 豆瓣月榜，支持分类选择与离线轮换。\n\n调整\n• 阅读摘要扩展本周、本月统计，趋势图最多同时显示两项。\n• 优化排版、字体层级与设置操作，精简干扰视觉呈现的冗余功能。\n\n升级注意\n已安装用户请覆盖补丁并合并随包字体，保留原设置和阅读数据。\n仅 v1.0.0 用户需先删除旧补丁 2-book-receipt-shortcut-and-lockscreen.lua。\n\n---\n\nv1.1.0｜2026-10-13\n\n新增\n• InkFolio 截图及设置、截图手势入口。\n• 周／月阅读时长柱状图及已读字数统计。\n• 图书匹配确认、重新检索、来源查询、复现记录及脱敏诊断导出。\n\n调整\n• 完善豆瓣匹配、评分均分及获取规则，减少重复联网。\n• 整理设置层级与界面，修复菜单图标、返回、取消和缓存保留问题。\n• 新用户默认黑色背景、关闭进度弹窗，首次显示时自动适配比例；旧用户设置保留。\n\n升级注意\n已安装 v1.0.0 的用户：本次补丁文件更名为 2-inkfolio.lua。升级前请删除旧文件 2-book-receipt-shortcut-and-lockscreen.lua，再安装新补丁。已有设置和字体可继续使用。",
+    UIManager:show(Inkfolio.textViewer{
+        title=L('更新日志'),text=L("v1.3.0｜2026-10-30\n\n新增\n• 封面皮肤：以图书封面为背景，叠加阅读信息卡，支持卡片底色自动适配。\n• 城市天气：支持今日／明日预报，新增天气状态图标显示。\n• 支持简体中文与英语切换。\n• 外观预览支持点击全屏查看，返回后可继续调整。\n\n调整\n• 统一排版与设置交互，优化联网更新，减少重复请求。\n\n修复\n• 修复阅读目标保存异常、天气缓存显示及部分英文界面问题。\n\nv1.2.0｜2026-10-23\n\n新增\n• 阅读字数按日汇总，新增周／月字数柱状图，更直观地查看阅读量。\n• 日／周／月阅读目标，支持时长或字数，展示完成比例。\n• 小票、像素、现代三种风格，可切换并实时预览。\n• 豆瓣月榜，支持分类选择与离线轮换。\n\n调整\n• 阅读摘要扩展本周、本月统计，趋势图最多同时显示两项。\n• 优化排版、字体层级与设置操作，精简干扰视觉呈现的冗余功能。\n\n升级注意\n已安装用户请覆盖补丁并合并随包字体，保留原设置和阅读数据。\n仅 v1.0.0 用户需先删除旧补丁 2-book-receipt-shortcut-and-lockscreen.lua。\n\n---\n\nv1.1.0｜2026-10-13\n\n新增\n• InkFolio 截图及设置、截图手势入口。\n• 周／月阅读时长柱状图及已读字数统计。\n• 图书匹配确认、重新检索、来源查询、复现记录及脱敏诊断导出。\n\n调整\n• 完善豆瓣匹配、评分均分及获取规则，减少重复联网。\n• 整理设置层级与界面，修复菜单图标、返回、取消和缓存保留问题。\n• 新用户默认黑色背景、关闭进度弹窗，首次显示时自动适配比例；旧用户设置保留。\n\n升级注意\n已安装 v1.0.0 的用户：本次补丁文件更名为 2-inkfolio.lua。升级前请删除旧文件 2-book-receipt-shortcut-and-lockscreen.lua，再安装新补丁。已有设置和字体可继续使用。"),
         justified=false,show_menu=false,add_default_buttons=true,
     })
 end
 
 local function showAbout()
-    local text="InkFolio\nv1.2.0｜2026-10-23\n\n为 KOReader 提供阅读信息卡，支持休眠显示与截图。\n\n• 图书信息：联网获取豆瓣评分，支持匹配确认、重新检索；展示豆瓣月榜，支持分类与离线轮换。\n• 阅读统计：展示阅读进度、时长、页数与字数，支持数据自定义组合及周／月趋势图。\n• 阅读目标：按日、周、月设置阅读时长或字数目标，查看完成进度。\n• UI皮肤：提供小票、像素、现代三种风格，支持实时预览，可调整宽度、字号、比例和背景。\n\n兼容性\n• Kobo Sage：已通过实机验证。\n• Kindle、PocketBook：需先安装并正常运行 KOReader；尚未经实机验证，休眠显示取决于设备支持。\n• Android 手机及安卓电纸书：使用 KOReader 官方 GitHub 安装包，可尝试信息卡预览与截图；不能替换系统锁屏，尚未经实机验证。\n• F-Droid 版 KOReader：不支持本项目所需的用户补丁，无法使用。\n\n开发与设计：zacharykim88\n开发辅助：OpenAI Codex\n推荐项目：墨享 · InkShare——分享 KOReader 截图。\n\n上游致谢\nEstela-Zelin84/KOReader_Book-Receipt\nu/hundredpercentcocoa\nomer-faruq/koreader-user-patches\n\n代码：GPL-3.0｜字体许可见随包说明"
-    UIManager:show(require('ui/widget/textviewer'):new{
-        title='关于 InkFolio',text=text,justified=false,show_menu=false,
+    local text=L("InkFolio\nv1.3.0｜2026-10-30\n\n为 KOReader 设计的锁屏插件，以阅读信息卡展示图书封面、豆瓣评分、阅读进度、时长、页数和字数，支持阅读目标、豆瓣月榜、城市天气与截图。\n\n提供小票、像素、现代、封面四种 UI皮肤，支持外观实时预览与调整，以及简体中文／英语切换。\n\n兼容性\n• Kobo Sage、Kindle：已通过实机验证。\n• PocketBook：需先安装 KOReader，休眠显示取决于设备支持，尚未经实机验证。\n• Android 手机及安卓电纸书：使用支持用户补丁的 KOReader 官方安装包，可尝试预览与截图；无法替换系统锁屏，尚未经实机验证。\n• F-Droid 版 KOReader：不支持所需的用户补丁，无法使用。\n\n开发与设计：zacharykim88\n开发辅助：OpenAI Codex\n\n上游致谢\nEstela-Zelin84/KOReader_Book-Receipt\nu/hundredpercentcocoa\nomer-faruq/koreader-user-patches\n\n代码：GPL-3.0｜字体许可见随包说明")
+    UIManager:show(Inkfolio.textViewer{
+        title=L('关于 InkFolio'),text=text,justified=false,show_menu=false,
         buttons_table={{
-            {text='更新日志',callback=Inkfolio.showChangelog},
-            {text='墨享 InkShare',callback=function()openProjectLink('https://github.com/zacharykim88/inkshare.koplugin')end},
-            {text='上游项目',callback=function() openProjectLink('https://github.com/Estela-Zelin84/KOReader_Book-Receipt') end},
-            {text='原始补丁',callback=function() openProjectLink('https://github.com/omer-faruq/koreader-user-patches') end},
-            {text='许可证',callback=function() openProjectLink('https://github.com/Estela-Zelin84/KOReader_Book-Receipt/blob/main/LICENSE') end},
+            {text=L('更新日志'),callback=Inkfolio.showChangelog},
+            {text=L('上游项目'),callback=function() openProjectLink('https://github.com/Estela-Zelin84/KOReader_Book-Receipt') end},
+            {text=L('原始补丁'),callback=function() openProjectLink('https://github.com/omer-faruq/koreader-user-patches') end},
+            {text=L('许可证'),callback=function() openProjectLink('https://github.com/Estela-Zelin84/KOReader_Book-Receipt/blob/main/LICENSE') end},
         }},add_default_buttons=true,
     })
 end
@@ -4417,6 +6951,34 @@ function Inkfolio.refreshParentOnClose(child,parent)
     end
     return child
 end
+function Inkfolio.selectLanguage(language)
+    assert(language=='zh_CN'or language=='en_US','InkFolio: invalid language')
+    Inkfolio.persistSettings({[S.language]=language})
+    if refreshQuicklook then refreshQuicklook()end
+    -- Gesture action names were registered once during startup; update only our own entries.
+    for id,title in pairs({quicklookbox_action='InkFolio 预览',inkfolio_settings='InkFolio 设置',inkfolio_screenshot='保存InkFolio 截图'})do
+        Dispatcher:removeAction(id)
+        Dispatcher:registerAction(id,{category='none',event=id=='quicklookbox_action'and 'QuickLook'or id=='inkfolio_settings'and 'InkfolioSettings'or 'InkfolioScreenshot',title=L(title),general=true})
+    end
+end
+function Inkfolio.languageMenu()
+    local rows={}
+    for _,item in ipairs({{'zh_CN','简体中文'},{'en_US','English'}})do
+        local id,label=item[1],item[2]
+        rows[#rows+1]={text=label,radio=true,checked_func=function()return Inkfolio.language()==id end,
+            callback=function()
+                if Inkfolio.language()==id then return end
+                Inkfolio.selectLanguage(id)
+                local container=Inkfolio.settings_container
+                UIManager:nextTick(function()
+                    if container then UIManager:close(container)end
+                    Inkfolio.settings()
+                end)
+            end}
+    end
+    return rows
+end
+
 local function receiptSettingsMenu()
         local categories={}
         for _,category in ipairs(Inkfolio.MONTHLY_CATEGORIES)do
@@ -4439,11 +7001,23 @@ local function receiptSettingsMenu()
                     if action then action(nextval) end
                 end}
         end
-        return {
-            text='InkFolio 设置',
+        local function weatherOption(label,key,offset,default)
+            local item=toggle(label,key,Inkfolio.weatherChanged,default)
+            local callback=item.callback
+            item.checked_func=function()return Inkfolio.weatherSelected(offset)end
+            item.callback=function()
+                if not Inkfolio.isCardStyle()then return callback()end
+                local choice=Inkfolio.weatherSelected(offset)and 'off'or (offset==0 and 'today'or 'tomorrow')
+                G_reader_settings:saveSetting(S.cover_weather,choice)
+                Inkfolio.weatherChanged(choice~='off')
+            end
+            return item
+        end
+        local menu={
+            text=L('InkFolio 设置'),
             sub_item_table={
-                {text='启用休眠显示',keep_menu_open=true,
-                    help_text='使用 InkFolio作为休眠壁纸；关闭后保持屏幕原样。此功能仅在支持休眠壁纸的平台启用。',
+                {text=L('启用休眠显示'),keep_menu_open=true,
+                    help_text=L('使用 InkFolio作为休眠壁纸；关闭后保持屏幕原样。此功能仅在支持休眠壁纸的平台启用。'),
                     enabled_func=function()return Device:supportsScreensaver()end,
                     checked_func=function()return G_reader_settings:readSetting('screensaver_type')=='book_receipt'end,
                     callback=function()
@@ -4451,16 +7025,32 @@ local function receiptSettingsMenu()
                         local selected=G_reader_settings:readSetting('screensaver_type')=='book_receipt'
                         G_reader_settings:saveSetting('screensaver_type',selected and 'disable' or 'book_receipt')
                     end},
-                {text='显示内容',sub_item_table={
-                    {text='图书与榜单',sub_item_table={toggle('封面',S.cover),toggle('评分',S.score),
-                        toggle('豆瓣月榜',S.intro)}},
-                    {text='阅读进度',sub_item_table=progressMenu()},
-                    {text='阅读摘要',sub_item_table=summaryMenu()},
-                    {text='底部文字',callback=editFooter},
-                    {text='月榜设置',enabled_func=function()return enabled(S.intro)end,sub_item_table={
-                        {text='榜单分类',sub_item_table=categories},
-                        {text='锁屏时轮换',keep_menu_open=true,
-                            help_text='关闭时显示所选分类的前3本；开启后，每次锁屏按缓存顺序换下一组，每组最多3本，末组后回到开头。离线可用，预览和截图不换组。评分为最近获取时的数值。',
+                {text=L('显示内容'),help_text=L('勾选与选择立即生效；返回菜单会保留修改。'),sub_item_table={
+                    {text=L('天气与日期'),help_text=L("封面皮肤的天气与日期位于卡片底部，其他皮肤位于顶部。封面可选今日或明日，其他皮肤可同时显示。天气每6小时更新，跨日或切城时重新检查；刷新失败时继续显示同一城市当天的有效缓存。可通过“更新信息”手动刷新；两日均关闭时不获取天气。"),sub_item_table={
+                        weatherOption(L('今日天气'),S.weather,0),
+                        weatherOption(L('明日天气'),S.weather_tomorrow,1,false),
+                        toggle(L('显示日期'),S.date,function()if refreshQuicklook then refreshQuicklook() end end),
+                        {text=L('天气城市'),sub_item_table=weatherCityMenu()},
+                        {text=L('天气显示'),help_text=L('使用统一黑白线条图标替代天气状态文字，温度与日期照常显示；未知状态保留文字。'),sub_item_table={
+                            {text=L('文字'),radio=true,checked_func=function()return Inkfolio.weatherDisplay()=='text'end,callback=function()G_reader_settings:saveSetting(S.weather_display,'text');if refreshQuicklook then refreshQuicklook()end end},
+                            {text=L('图标'),radio=true,checked_func=function()return Inkfolio.weatherDisplay()=='icons'end,callback=function()G_reader_settings:saveSetting(S.weather_display,'icons');if refreshQuicklook then refreshQuicklook()end end}}},
+                    }},
+                    {text=L('图书与榜单'),cover_disabled=true,sub_item_table={toggle(L('封面'),S.cover),toggle(L('评分'),S.score),
+                        toggle(L('豆瓣月榜'),S.intro,function(on)
+                            if on then
+                                RUN.auto_holds.monthly=nil
+                                local due=Inkfolio.monthlyDeadline()
+                                if due and due<=os.time()then Inkfolio.resetNetworkPause();Inkfolio.monthlyCheck()end
+                            end
+                            startPoll()
+                        end)}},
+                    {text=L('阅读进度'),sub_item_table=progressMenu()},
+                    {text=L('阅读摘要'),sub_item_table=summaryMenu()},
+                    {text=L('底部文字'),cover_disabled=true,callback=editFooter},
+                    {text=L('月榜设置'),cover_disabled=true,enabled_func=function()return enabled(S.intro)end,sub_item_table={
+                        {text=L('榜单分类'),sub_item_table=categories},
+                        {text=L('锁屏时轮换'),keep_menu_open=true,
+                            help_text=L('关闭时显示所选分类的前3本；开启后，每次锁屏按缓存顺序换下一组，每组最多3本，末组后回到开头。离线可用，预览和截图不换组。评分为最近获取时的数值。'),
                             checked_func=function()return G_reader_settings:readSetting(S.monthly_rotate)==true end,
                             callback=function()
                                 local active=G_reader_settings:readSetting(S.monthly_rotate)~=true
@@ -4469,53 +7059,73 @@ local function receiptSettingsMenu()
                                 if active and (not Inkfolio.visibleMonthly() or not Inkfolio.visibleMonthly().complete) then Inkfolio.monthly.pending=true end
                                 Inkfolio.saveMonthly()
                             end},
-                        {text='刷新月榜',help_text='重新获取所选分类的完整月榜和评分。普通图书信息更新不会强制刷新月榜。',
+                        {text=L('刷新月榜'),help_text=L('重新获取所选分类的完整月榜和评分。普通图书信息更新不会强制刷新月榜。'),
                             enabled_func=function()return networkingEnabled() and connected() and not RUN.active and not RUN.worker end,
                             callback=Inkfolio.refreshMonthly},
                     }},
                 }},
-                {text='阅读目标',sub_item_table=Inkfolio.goalMenu()},
-                {text='外观调整',callback=editAppearance},
-                {text='联网设置',text_func=function()local n=Inkfolio.pendingCount();return n>0 and ('联网设置 · '..n..'本待确认') or '联网设置' end,sub_item_table={
-                    toggle('允许联网',S.online,function(now)
-                        if not now then MANUAL_CONNECT_PENDING=false;abortRound() else dailyCheck();startPoll() end
+                {text=L('阅读目标'),cover_disabled=true,sub_item_table=Inkfolio.goalMenu()},
+                {text=L('外观调整'),help_text=L("点击预览画面全屏显示，再次点击返回；保存后生效。封面卡片支持自动、白色或深灰底色。"),callback=editAppearance},
+                {text=L('联网设置'),text_func=function()local n=Inkfolio.pendingCount();return n>0 and (L('联网设置 · ')..n..L('本待确认')) or L('联网设置') end,sub_item_table={
+                    toggle(L('允许联网'),S.online,function(now)
+                        if not now then MANUAL_CONNECT_PENDING=false;abortRound() else Inkfolio.resetNetworkPause();dailyCheck();startPoll() end
                     end),
-                    {text='更新信息',enabled_func=function()
+                    {text=L('更新信息'),enabled_func=function()
                         return networkingEnabled() and not RUN.active and not RUN.worker
-                    end,callback=updateManually,help_text='阅读界面：重新获取当前书籍。非阅读界面：扫描整个书库，补全未完整获取的书籍。'},
-                    {text='信息状态',callback=Inkfolio.showInformation},
-                    {text_func=function()return '待确认图书（'..Inkfolio.pendingCount()..'）' end,callback=Inkfolio.showPendingMatches},
-                    {text='重新匹配本书',callback=function()Inkfolio.editMatchQuery(currentBook())end,
+                    end,callback=updateManually,help_text=L('阅读界面：重新获取当前书籍并更新一次天气。非阅读界面：扫描整个书库，补全未完整获取的书籍并更新一次天气。今日、明日天气均关闭后不请求天气。')},
+                    {text=L('信息状态'),callback=Inkfolio.showInformation},
+                    {text_func=function()return L('待确认图书（')..Inkfolio.pendingCount()..(Inkfolio.language()=='en_US'and ')'or '）')end,callback=Inkfolio.showPendingMatches},
+                    {text=L('重新匹配本书'),callback=function()Inkfolio.editMatchQuery(currentBook())end,
                         enabled_func=function()return currentBook()~=nil and not RUN.active and not RUN.worker end},
-                    {text='解除本书匹配',callback=Inkfolio.clearCurrentMatch,
+                    {text=L('解除本书匹配'),callback=Inkfolio.clearCurrentMatch,
                         enabled_func=function()local b=currentBook();return b and Inkfolio.matchState.choices[Inkfolio.fileMatchKey(b)]~=nil and not RUN.active and not RUN.worker end},
 
-                    {text='书库目录',callback=chooseLibraryRoot,
-                        help_text='选择存放图书的文件夹。更改后重新建立记录，已有图书可通过“更新信息”获取。'},
+                    {text=L('书库目录'),callback=chooseLibraryRoot,
+                        help_text=L('选择存放图书的文件夹。更改后重新建立记录，已有图书可通过“更新信息”获取。')},
                 }},
-                {text='保存截图',callback=Inkfolio.saveScreenshot},
-                {text='开发者选项',sub_item_table={
-                    {text='诊断信息',callback=Inkfolio.showDiagnostics},
-                    toggle('详细日志',S.debug_log,nil,false),
-                    toggle('复现记录',S.repro,function(now)if now then Inkfolio.recordAction('复现记录') end end,false),
-                    toggle('进度弹窗',S.progress,function(now)
+                {text=L('保存截图'),callback=Inkfolio.saveScreenshot},
+                {text=L('开发者选项'),sub_item_table={
+                    {text=L('诊断信息'),callback=Inkfolio.showDiagnostics},
+                    toggle(L('详细日志'),S.debug_log,nil,false),
+                    toggle(L('复现记录'),S.repro,function(now)if now then Inkfolio.recordAction('复现记录') end end,false),
+                    toggle(L('进度弹窗'),S.progress,function(now)
                         if not now then progressIgnore()
                         elseif PROGRESS.active then
                             PROGRESS.hidden=false;progressPaint(true);UIManager:scheduleIn(5,progressTick)
                         end
                     end),
                 }},
-                {text='关于',callback=showAbout},
+                {text=L('语言'),help_text=L('仅切换 InkFolio 的界面语言，不影响 KOReader、书籍内容或用户输入的文字。'),sub_item_table=Inkfolio.languageMenu()},
+                {text=L('关于'),callback=showAbout},
             },
         }
+        local function restrict(rows,parent_disabled)
+            for _,item in ipairs(rows)do
+                local restricted=parent_disabled or item.cover_disabled
+                if restricted then
+                    local available=item.enabled_func
+                    item.enabled_func=function()
+                        return not Inkfolio.isCardStyle()and (not available or available())
+                    end
+                    item.help_text=(item.help_text and (item.help_text..'\n')or '')..L("封面皮肤不显示此项；切换皮肤后可继续使用，原设置保留。")
+                    if item.callback then
+                        local callback=item.callback
+                        item.callback=function(...)if item.enabled_func()then return callback(...)end end
+                    end
+                end
+                if item.sub_item_table then restrict(item.sub_item_table,restricted)end
+            end
+        end
+        restrict(menu.sub_item_table)
+        return menu
 end
 
 -- Settings and the sleep toggle live exclusively in Tools / Inkfolio.
 -- No sleep-menu injection: other native sleep modes are left untouched.
 local receiptMenuWidget={name='read_receipt_settings'}
 function receiptMenuWidget:addToMainMenu(items)
-    items.read_receipt={text='InkFolio',keep_menu_open=true,callback=Inkfolio.settings}
-    items.read_receipt.text_func=function()local n=Inkfolio.pendingCount();return n>0 and ('InkFolio · '..n..'本待确认') or 'InkFolio' end
+    items.read_receipt={text='InkFolio',callback=Inkfolio.settings}
+    items.read_receipt.text_func=function()local n=Inkfolio.pendingCount();return n>0 and ('InkFolio · '..n..L('本待确认')) or 'InkFolio' end
 end
 for _,module_name in ipairs({'apps/reader/modules/readermenu','apps/filemanager/filemanagermenu'}) do
     local Menu=require(module_name)
@@ -4533,7 +7143,7 @@ local MenuSorter=require('ui/menusorter')
 local nativeSort=MenuSorter.sort
 MenuSorter.sort=function(self,items,order)
     if items.read_receipt then
-        assert(type(order.tools)=='table','InkFolio: KOReader 工具菜单不可用')
+        assert(type(order.tools)=='table',L('InkFolio: KOReader 工具菜单不可用'))
         for _,list in pairs(order) do
             if type(list)=='table' then
                 for i=#list,1,-1 do if list[i]=='read_receipt' then table.remove(list,i) end end
@@ -4551,7 +7161,7 @@ function Inkfolio.settings()
             if item.sub_item_table then retain(item.sub_item_table) end
             if item.callback then
                 item.keep_menu_open=true
-                local callback=item.callback;local stage=item.text or '设置选项'
+                local callback=item.callback;local stage=item.text or L('设置选项')
                 item.callback=function(...)return Inkfolio.guard(stage,callback,...)end
             end
             if item.checked_func then item.mandatory_func=function()return item.checked_func() and '☑' or '☐' end end
@@ -4597,7 +7207,7 @@ function Inkfolio.settings()
     if widget.backToUpperMenu then
         local upper=widget.backToUpperMenu
         widget.backToUpperMenu=function(self,...)
-            Inkfolio.recordAction(#self.item_table_stack>0 and '菜单返回' or '菜单关闭')
+            Inkfolio.recordAction(#self.item_table_stack>0 and L('菜单返回') or L('菜单关闭'))
             return upper(self,...)
         end
         local close=widget.closeMenu
@@ -4609,7 +7219,7 @@ function Inkfolio.settings()
     if not widget.backToUpperMenu then
         local parentClose=widget.onClose
         widget.onClose=function(self,...)
-            Inkfolio.recordAction(#self.item_table_stack>0 and '菜单返回' or '菜单关闭')
+            Inkfolio.recordAction(#self.item_table_stack>0 and L('菜单返回') or L('菜单关闭'))
             return parentClose(self,...)
         end
         local closeAll=widget.onCloseAllMenus
@@ -4619,7 +7229,8 @@ function Inkfolio.settings()
         end
     end
     local onCloseWidget=widget.onCloseWidget
-    widget.onCloseWidget=function(self,...)Inkfolio.recordAction('设置关闭');self.inkfolio_closed=true;if onCloseWidget then return onCloseWidget(self,...) end end
+    widget.onCloseWidget=function(self,...)if Inkfolio.settings_container==container then Inkfolio.settings_container=nil end;Inkfolio.recordAction('设置关闭');self.inkfolio_closed=true;if onCloseWidget then return onCloseWidget(self,...) end end
+    Inkfolio.settings_container=container
     UIManager:show(container)
     return true
 end
@@ -4629,11 +7240,11 @@ for _,target in ipairs({ReaderUI,require('apps/filemanager/filemanager')}) do
     target.onInkfolioScreenshot=function()return Inkfolio.saveScreenshot()end
 end
 Dispatcher:registerAction('quicklookbox_action',{
-    category='none',event='QuickLook',title='InkFolio 预览',general=true})
+    category='none',event='QuickLook',title=L('InkFolio 预览'),general=true})
 Dispatcher:registerAction('inkfolio_settings',{
-    category='none',event='InkfolioSettings',title='InkFolio 设置',general=true})
+    category='none',event='InkfolioSettings',title=L('InkFolio 设置'),general=true})
 Dispatcher:registerAction('inkfolio_screenshot',{
-    category='none',event='InkfolioScreenshot',title='保存InkFolio 截图',general=true})
+    category='none',event='InkfolioScreenshot',title=L('保存InkFolio 截图'),general=true})
 
 -- Guard only Inkfolio entry points and editor methods. Do not hook UIManager,
 -- KOReader's global exception handler, or another plugin's callbacks.
@@ -4645,3 +7256,5 @@ for _,entry in ipairs({{'init','外观调整'},{'refreshPreview','外观调整'}
     local name,stage=entry[1],entry[2];local original=AppearanceEditor[name]
     AppearanceEditor[name]=function(...)return Inkfolio.guard(stage,original,...)end
 end
+
+for _,list in ipairs({Inkfolio.UI_STYLES,UI_THEMES,SUMMARY_ITEMS,PROGRESS_ITEMS,Inkfolio.CHART_ITEMS,Inkfolio.MONTHLY_CATEGORIES,Inkfolio.GOAL_PERIODS,Inkfolio.GOAL_METRICS,Inkfolio.APPEARANCE_NUMBERS})do Inkfolio.localizedLabels(list)end

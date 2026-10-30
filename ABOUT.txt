@@ -1,0 +1,22 @@
+InkFolio
+v1.3.0｜2026-10-30
+
+为 KOReader 设计的锁屏插件，以阅读信息卡展示图书封面、豆瓣评分、阅读进度、时长、页数和字数，支持阅读目标、豆瓣月榜、城市天气与截图。
+
+提供小票、像素、现代、封面四种 UI皮肤，支持外观实时预览与调整，以及简体中文／英语切换。
+
+兼容性
+• Kobo Sage、Kindle：已通过实机验证。
+• PocketBook：需先安装 KOReader，休眠显示取决于设备支持，尚未经实机验证。
+• Android 手机及安卓电纸书：使用支持用户补丁的 KOReader 官方安装包，可尝试预览与截图；无法替换系统锁屏，尚未经实机验证。
+• F-Droid 版 KOReader：不支持所需的用户补丁，无法使用。
+
+开发与设计：zacharykim88
+开发辅助：OpenAI Codex
+
+上游致谢
+Estela-Zelin84/KOReader_Book-Receipt
+u/hundredpercentcocoa
+omer-faruq/koreader-user-patches
+
+代码：GPL-3.0｜字体许可见随包说明

@@ -1,0 +1,56 @@
+name: Publish InkFolio v1.3.0
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/publish-v1.3.0.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: publish-inkfolio-v1.3.0
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify release package
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/inkfolio-v1.3.0"
+          cd "$RUNNER_TEMP/inkfolio-v1.3.0"
+          base="https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA"
+          curl --fail --location --silent --show-error "$base/dist/InkFolio-v1.3.0.zip" --output InkFolio-v1.3.0.zip
+          printf '%s  %s\n' '61d29d148b8989a4e196cfefe7d7f8af811da7e74effedbd2703d8f8c813d4c6' 'InkFolio-v1.3.0.zip' | sha256sum --check
+          curl --fail --location --silent --show-error "$base/2-inkfolio.lua" --output 2-inkfolio.lua
+          curl --fail --location --silent --show-error "$base/RELEASE-NOTES.md" --output RELEASE-NOTES.md
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,zipfile
+          source=Path('2-inkfolio.lua').read_bytes()
+          assert hashlib.sha256(source).hexdigest()=='3622e8992b4d775b309b1e429e1f8901a861c8919bd415f388e42226d6053550'
+          with zipfile.ZipFile('InkFolio-v1.3.0.zip') as z:
+              assert z.testzip() is None
+              base='InkFolio-v1.3.0/'
+              assert z.read(base+'2-inkfolio.lua')==source
+              names=z.namelist()
+              assert len(names)==len(set(names))
+              assert all(n.startswith(base) and '..' not in n.split('/') for n in names)
+              lines=z.read(base+'SHA256SUMS.txt').decode().splitlines()
+              assert len(lines)==len(names)-1
+              for line in lines:
+                  digest,name=line.split('  ',1)
+                  assert hashlib.sha256(z.read(base+name)).hexdigest()==digest
+          PY
+          sha256sum InkFolio-v1.3.0.zip 2-inkfolio.lua > SHA256SUMS.txt
+      - name: Publish v1.3.0
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/inkfolio-v1.3.0"
+          gh release create v1.3.0 InkFolio-v1.3.0.zip 2-inkfolio.lua SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title 'InkFolio v1.3.0' --notes-file RELEASE-NOTES.md --latest
